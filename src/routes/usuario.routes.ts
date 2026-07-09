@@ -4,10 +4,11 @@ import {
     registrar,
     login
 } from '../controllers/usuario.controller'
+import { verificarToken } from "../middlewares/auth.middleware";
 
 const router = Router();
 
-router.post('/registro', registrar)
+router.post('/registro', verificarToken, registrar)
 router.post('/login', login)
 
 
