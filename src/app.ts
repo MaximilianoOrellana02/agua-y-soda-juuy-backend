@@ -9,8 +9,12 @@ import historialRoutes from './routes/historial.routes';
 
 const app = express();
 
-// Middlewares globales
-app.use(cors());
+const origenesPermitidos = process.env.FRONTEND_URL
+    ? [process.env.FRONTEND_URL]
+    : true;;
+
+app.use(cors({ origin: origenesPermitidos }));
+
 app.use(express.json());
 
 // Acá vamos a ir agregando las rutas a medida que las creemos, ej:
