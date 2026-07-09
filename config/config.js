@@ -1,4 +1,6 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 
 const usarSSL = process.env.DB_SSL === 'true';
 
@@ -11,7 +13,7 @@ module.exports = {
         port: process.env.DB_PORT,
         dialect: 'mysql',
         dialectOptions: usarSSL
-            ? { ssl: { require: true, rejectUnauthorized: false } }
+            ? { ssl: { ca: fs.readFileSync(path.join(__dirname, '../src/config/aiven-ca.pem')).toString() } }
             : {},
     },
 };

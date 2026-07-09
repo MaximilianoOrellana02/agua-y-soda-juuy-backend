@@ -1,5 +1,8 @@
 import { Sequelize } from "sequelize";
 import dotenv from "dotenv"
+import path from "path";
+import fs from 'fs';
+
 
 dotenv.config();
 
@@ -17,9 +20,8 @@ const sequelize = new Sequelize(
         dialectOptions: usarSSL
             ? {
                 ssl: {
-                    require: true,
-                    rejectUnauthorized: false
-                }
+                    ca: fs.readFileSync(path.join(__dirname, 'aiven-ca.pem')).toString(),
+                },
             }
             : {},
     }
