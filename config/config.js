@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const usarSSL = process.env.DB_SSL === 'true';
+const rutaCertificado = path.join(process.cwd(), 'src', 'config', 'aiven-ca.pem');
 
 module.exports = {
     development: {
@@ -13,7 +14,7 @@ module.exports = {
         port: process.env.DB_PORT,
         dialect: 'mysql',
         dialectOptions: usarSSL
-            ? { ssl: { ca: fs.readFileSync(path.join(__dirname, '../src/config/aiven-ca.pem')).toString() } }
+            ? { ssl: { ca: fs.readFileSync(rutaCertificado).toString() } }
             : {},
     },
 };
