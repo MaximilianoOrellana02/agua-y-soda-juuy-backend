@@ -3,6 +3,7 @@ import bcrypt from "bcrypt"
 import jwt from "jsonwebtoken"
 import Usuario from "../models/Usuario";
 import { error } from "node:console";
+import { AuthRequest } from "../middlewares/auth.middleware";
 
 const JWT_SECRET = process.env.JWT_SECRET as string;
 const SALT_ROUDS = 10;
@@ -91,5 +92,37 @@ export async function login(req: Request, res: Response) {
     } catch (error) {
         console.error(error);
         return res.status(500).json({ error: 'Error al iniciar sesión' });
+    }
+}
+
+export async function cambiarPassword(req: AuthRequest, res: Response) {
+    try {
+        const { passwordActual, passwordNueva } = req.body;
+
+        if (!passwordActual || !passwordNueva) {
+            return res.status(400).json({ error: 'Faltan datos obligatorios' });
+        }
+
+        if (passwordNueva.length < 6) {
+            return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres' });
+        }
+
+        const usuario = await Usuario.findByPk(req.usuario!.id);
+        if (!usuario) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+
+        const passwordValida = await bcrypt.compare(passwordActual, usuario.passwordHash);
+        if (!passwordValida) {
+            return res.status(401).json({ error: 'La contraseña actual es incorrecta' });
+        }
+
+        const nuevoHash = await bcrypt.hash(passwordNueva, SALT_ROUDS);
+        await usuario.update({ passwordHash: nuevoHash });
+
+        return res.json({ mensaje: 'Contraseña actualizada correctamente' });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ error: 'Error al cambiar la contraseña' });
     }
 }
