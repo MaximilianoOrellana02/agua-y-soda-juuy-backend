@@ -14,7 +14,7 @@ module.exports = {
         port: process.env.DB_PORT,
         dialect: 'mysql',
         dialectOptions: usarSSL
-            ? { ssl: { ca: fs.readFileSync(rutaCertificado).toString() } }
+            ? { ssl: { ca: fs.readFileSync(rutaCertificado).toString(), rejectUnauthorized: false } }
             : {},
     },
 };

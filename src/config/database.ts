@@ -21,6 +21,7 @@ const sequelize = new Sequelize(
             ? {
                 ssl: {
                     ca: fs.readFileSync(rutaCertificado).toString(),
+                    rejectUnauthorized: false,
                 },
             }
             : {},
