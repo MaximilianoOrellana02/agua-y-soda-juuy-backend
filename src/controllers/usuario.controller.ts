@@ -77,7 +77,7 @@ export async function login(req: Request, res: Response) {
         const token = jwt.sign(
             { id: usuario.id, username: usuario.username },
             JWT_SECRET,
-            { expiresIn: '8h' }
+            { expiresIn: '24h' }
         );
 
         return res.json({

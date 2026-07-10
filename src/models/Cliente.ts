@@ -15,11 +15,13 @@ interface ClienteAttributes {
   categoria: CategoriaCliente;
   saldoActual: number;
   tipoCliente: TipoCliente;
+  latitud: number | null;
+  longitud: number | null;
 }
 
 interface ClienteCreationAttributes extends Optional<
   ClienteAttributes,
-  "id" | "saldoActual" | "barrioId" | "categoria"
+  "id" | "saldoActual" | "barrioId" | "categoria" | "latitud" | "longitud"
 > {}
 
 class Cliente
@@ -36,6 +38,8 @@ class Cliente
   public categoria!: CategoriaCliente;
   public saldoActual!: number;
   public tipoCliente!: TipoCliente;
+  public latitud!: number | null;
+  public longitud!: number | null;
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -86,6 +90,14 @@ Cliente.init(
       type: DataTypes.ENUM("domicilio", "restaurante"),
       allowNull: false,
       defaultValue: "domicilio",
+    },
+    latitud: {
+      type: DataTypes.DECIMAL(10, 7),
+      allowNull: true,
+    },
+    longitud: {
+      type: DataTypes.DECIMAL(10, 7),
+      allowNull: true,
     },
   },
   {

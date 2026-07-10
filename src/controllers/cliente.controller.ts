@@ -4,6 +4,7 @@ import Cliente from "../models/Cliente";
 import SaldoEnvase from "../models/SaldoEnvase";
 import Producto from "../models/Producto";
 import Barrio from "../models/Barrio";
+import { geocodificarDireccion } from "../utils/geocode";
 
 export async function crearCliente(req: AuthRequest, res: Response) {
   try {
@@ -24,6 +25,11 @@ export async function crearCliente(req: AuthRequest, res: Response) {
         .json({ error: "Nombre y apellido son obligatorios" });
     }
 
+    let coordenadas = null;
+    if (direccion) {
+      coordenadas = await geocodificarDireccion(direccion, localidad);
+    }
+
     const cliente = await Cliente.create({
       nombre,
       apellido,
@@ -33,6 +39,8 @@ export async function crearCliente(req: AuthRequest, res: Response) {
       barrioId,
       categoria,
       tipoCliente: tipoCliente || "particular",
+      latitud: coordenadas?.latitud ?? null,
+      longitud: coordenadas?.longitud ?? null,
     });
 
     return res.status(201).json(cliente);
@@ -105,6 +113,19 @@ export async function actualizarCliente(req: AuthRequest, res: Response) {
       categoria,
     } = req.body;
 
+    let latitud = cliente.latitud;
+    let longitud = cliente.longitud;
+
+    const direccionCambio = direccion && direccion !== cliente.direccion;
+    if (direccionCambio) {
+      const coordenadas = await geocodificarDireccion(
+        direccion,
+        localidad ?? cliente.localidad,
+      );
+      latitud = coordenadas?.latitud ?? null;
+      longitud = coordenadas?.longitud ?? null;
+    }
+
     await cliente.update({
       nombre: nombre ?? cliente.nombre,
       apellido: apellido ?? cliente.apellido,
@@ -114,6 +135,8 @@ export async function actualizarCliente(req: AuthRequest, res: Response) {
       tipoCliente: tipoCliente ?? cliente.tipoCliente,
       barrioId: barrioId ?? cliente.barrioId,
       categoria: categoria ?? cliente.categoria,
+      latitud,
+      longitud,
     });
 
     return res.json(cliente);
@@ -170,5 +193,27 @@ export async function obtenerSaldoEnvases(req: AuthRequest, res: Response) {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: "Error al obtener saldo de envases" });
+  }
+}
+
+export async function ajustarUbicacion(req: AuthRequest, res: Response) {
+  try {
+    const { id } = req.params;
+    const { latitud, longitud } = req.body;
+
+    if (latitud == null || longitud == null) {
+      return res.status(400).json({ error: 'Latitud y longitud son obligatorias' });
+    }
+
+    const cliente = await Cliente.findByPk(id as string);
+    if (!cliente) {
+      return res.status(404).json({ error: 'Cliente no encontrado' });
+    }
+
+    await cliente.update({ latitud, longitud });
+    return res.json(cliente);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Error al ajustar ubicación' });
   }
 }
