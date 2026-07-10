@@ -4,6 +4,8 @@ import usuarioRoutes from './routes/usuario.routes'
 import clienteRoutes from './routes/cliente.routes'
 import productoRoutes from './routes/producto.routes';
 import historialRoutes from './routes/historial.routes';
+import barrioRoutes from './routes/barrio.routes';
+
 
 
 
@@ -21,6 +23,8 @@ app.use(express.json());
 app.use('/api/usuarios', usuarioRoutes)
 app.use('/api/clientes', clienteRoutes)
 app.use('/api/productos', productoRoutes);
-app.use('/api/historial', historialRoutes)
+app.use('/api/historial', historialRoutes);
+app.use('/api/barrios', barrioRoutes);
+
 
 export default app;

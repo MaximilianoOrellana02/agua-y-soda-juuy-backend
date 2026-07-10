@@ -1,29 +1,49 @@
-import Producto from './Producto';
-import PrecioProducto from './PrecioProducto';
-import Cliente from './Cliente';
-import Usuario from './Usuario';
-import SaldoEnvase from './SaldoEnvase';
-import Historial from './Historial';
-import HistorialDetalle from './HistorialDetalle';
+import Producto from "./Producto";
+import PrecioProducto from "./PrecioProducto";
+import Cliente from "./Cliente";
+import Usuario from "./Usuario";
+import SaldoEnvase from "./SaldoEnvase";
+import Historial from "./Historial";
+import HistorialDetalle from "./HistorialDetalle";
+import Barrio from "./Barrio";
 
 // Producto <-> PrecioProducto
-Producto.hasMany(PrecioProducto, { foreignKey: 'productoId', as: 'precios' });
-PrecioProducto.belongsTo(Producto, { foreignKey: 'productoId', as: 'producto' });
+Producto.hasMany(PrecioProducto, { foreignKey: "productoId", as: "precios" });
+PrecioProducto.belongsTo(Producto, {
+  foreignKey: "productoId",
+  as: "producto",
+});
 
 // Cliente <-> SaldoEnvase <-> Producto
-Cliente.hasMany(SaldoEnvase, { foreignKey: 'clienteId', as: 'saldosEnvase' });
-SaldoEnvase.belongsTo(Cliente, { foreignKey: 'clienteId', as: 'cliente' });
-Producto.hasMany(SaldoEnvase, { foreignKey: 'productoId', as: 'saldosEnvase' });
-SaldoEnvase.belongsTo(Producto, { foreignKey: 'productoId', as: 'producto' });
+Cliente.hasMany(SaldoEnvase, { foreignKey: "clienteId", as: "saldosEnvase" });
+SaldoEnvase.belongsTo(Cliente, { foreignKey: "clienteId", as: "cliente" });
+Producto.hasMany(SaldoEnvase, { foreignKey: "productoId", as: "saldosEnvase" });
+SaldoEnvase.belongsTo(Producto, { foreignKey: "productoId", as: "producto" });
 
 // Cliente <-> Historial <-> Usuario
-Cliente.hasMany(Historial, { foreignKey: 'clienteId', as: 'historiales' });
-Historial.belongsTo(Cliente, { foreignKey: 'clienteId', as: 'cliente' });
-Usuario.hasMany(Historial, { foreignKey: 'usuarioId', as: 'historiales' });
-Historial.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+Cliente.hasMany(Historial, { foreignKey: "clienteId", as: "historiales" });
+Historial.belongsTo(Cliente, { foreignKey: "clienteId", as: "cliente" });
+Usuario.hasMany(Historial, { foreignKey: "usuarioId", as: "historiales" });
+Historial.belongsTo(Usuario, { foreignKey: "usuarioId", as: "usuario" });
 
 // Historial <-> HistorialDetalle <-> Producto
-Historial.hasMany(HistorialDetalle, { foreignKey: 'historialId', as: 'detalles' });
-HistorialDetalle.belongsTo(Historial, { foreignKey: 'historialId', as: 'historial' });
-Producto.hasMany(HistorialDetalle, { foreignKey: 'productoId', as: 'detallesHistorial' });
-HistorialDetalle.belongsTo(Producto, { foreignKey: 'productoId', as: 'producto' });
+Historial.hasMany(HistorialDetalle, {
+  foreignKey: "historialId",
+  as: "detalles",
+});
+HistorialDetalle.belongsTo(Historial, {
+  foreignKey: "historialId",
+  as: "historial",
+});
+Producto.hasMany(HistorialDetalle, {
+  foreignKey: "productoId",
+  as: "detallesHistorial",
+});
+HistorialDetalle.belongsTo(Producto, {
+  foreignKey: "productoId",
+  as: "producto",
+});
+
+// Cliente <-> Barrio
+Barrio.hasMany(Cliente, { foreignKey: "barrioId", as: "clientes" });
+Cliente.belongsTo(Barrio, { foreignKey: "barrioId", as: "barrio" });
