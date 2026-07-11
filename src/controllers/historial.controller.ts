@@ -21,11 +21,12 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
     const t = await sequelize.transaction(); // arrancamos la transacción
 
     try {
-        const { clienteId, montoPagado, observacion, detalles } = req.body as {
+        const { clienteId, montoPagado, observacion, detalles, metodoPago } = req.body as {
             clienteId: string;
             montoPagado?: number;
             observacion?: string;
             detalles: DetalleInput[];
+            metodoPago?: 'efectivo' | 'transferencia'
         };
 
         if (!clienteId || !detalles || detalles.length === 0) {
@@ -101,6 +102,7 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
                 montoPagado: montoPagadoFinal,
                 saldoFinal,
                 observacion: observacion ?? null,
+                metodoPago: metodoPago ?? 'efectivo',
             },
             { transaction: t }
         );
