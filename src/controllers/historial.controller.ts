@@ -1,5 +1,5 @@
 import { Response } from 'express';
-import { Op } from 'sequelize';
+import { col, fn, Op } from 'sequelize';
 import sequelize from '../config/database';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import Cliente from '../models/Cliente';
@@ -127,8 +127,9 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
         }
 
         // 7. Actualizar el saldo del cliente
-        await cliente.update({ saldoActual: saldoFinal }, { transaction: t });
-
+        // 7. Actualizar el saldo del cliente y marcarlo como visitado hoy
+        const hoy = new Date().toISOString().split('T')[0];
+        await cliente.update({ saldoActual: saldoFinal, ultimaVisitaFecha: hoy }, { transaction: t });
         // Si llegamos hasta acá sin errores, confirmamos todo junto
         await t.commit();
 
@@ -199,5 +200,57 @@ export async function listarHistorial(req: AuthRequest, res: Response) {
     } catch (error) {
         console.error(error);
         return res.status(500).json({ error: 'Error al listar historial' });
+    }
+}
+
+export async function resumenHistorial(req: AuthRequest, res: Response) {
+    try {
+        const { desde, hasta } = req.query as Record<string, string>;
+
+        const where: any = {};
+        if (desde || hasta) {
+            where.fecha = {};
+            if (desde) where.fecha[Op.gte] = new Date(desde);
+            if (hasta) where.fecha[Op.lte] = new Date(hasta);
+        }
+
+        // Totales generales (cantidad de entregas, facturado, cobrado)
+        const totales = await Historial.findOne({
+            where,
+            attributes: [
+                [fn('COUNT', col('id')), 'cantidadEntregas'],
+                [fn('SUM', col('importeTotal')), 'totalImporte'],
+                [fn('SUM', col('montoPagado')), 'totalPagado'],
+            ],
+            raw: true,
+        });
+
+        // Desglose de cantidades entregadas, agrupado por producto
+        const detalles = await HistorialDetalle.findAll({
+            include: [
+                { model: Historial, as: 'historial', attributes: [], where },
+                { model: Producto, as: 'producto', attributes: ['nombre'] },
+            ],
+            attributes: [[fn('SUM', col('cantidadEntregada')), 'cantidad']],
+            group: ['producto.id', 'producto.nombre'],
+            raw: true,
+        });
+
+        const totalImporte = Number((totales as any)?.totalImporte ?? 0);
+        const totalPagado = Number((totales as any)?.totalPagado ?? 0);
+
+        return res.json({
+            cantidadEntregas: Number((totales as any)?.cantidadEntregas ?? 0),
+            totalImporte,
+            totalPagado,
+            totalPendiente: totalImporte - totalPagado,
+            productos: detalles.map((d: any) => ({
+                nombre: d['producto.nombre'],
+                cantidad: Number(d.cantidad),
+            })),
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ error: 'Error al obtener el resumen' });
     }
 }

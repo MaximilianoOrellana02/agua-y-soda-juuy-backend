@@ -17,17 +17,19 @@ interface ClienteAttributes {
   tipoCliente: TipoCliente;
   latitud: number | null;
   longitud: number | null;
+  ultimaVisitaFecha: string | null;
+
 }
+
 
 interface ClienteCreationAttributes extends Optional<
   ClienteAttributes,
-  "id" | "saldoActual" | "barrioId" | "categoria" | "latitud" | "longitud"
-> {}
+  "id" | "saldoActual" | "barrioId" | "categoria" | "latitud" | "longitud" | 'ultimaVisitaFecha'
+> { }
 
 class Cliente
   extends Model<ClienteAttributes, ClienteCreationAttributes>
-  implements ClienteAttributes
-{
+  implements ClienteAttributes {
   public id!: string;
   public nombre!: string;
   public apellido!: string;
@@ -40,6 +42,8 @@ class Cliente
   public tipoCliente!: TipoCliente;
   public latitud!: number | null;
   public longitud!: number | null;
+  public ultimaVisitaFecha!: string | null;
+
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -97,6 +101,10 @@ Cliente.init(
     },
     longitud: {
       type: DataTypes.DECIMAL(10, 7),
+      allowNull: true,
+    },
+    ultimaVisitaFecha: {
+      type: DataTypes.DATEONLY,
       allowNull: true,
     },
   },

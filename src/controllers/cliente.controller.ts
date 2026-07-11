@@ -5,6 +5,8 @@ import SaldoEnvase from "../models/SaldoEnvase";
 import Producto from "../models/Producto";
 import Barrio from "../models/Barrio";
 import { geocodificarDireccion } from "../utils/geocode";
+import { QueryTypes } from "sequelize";
+import sequelize from "../config/database";
 
 export async function crearCliente(req: AuthRequest, res: Response) {
   try {
@@ -215,5 +217,80 @@ export async function ajustarUbicacion(req: AuthRequest, res: Response) {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Error al ajustar ubicación' });
+  }
+}
+
+export async function marcarVisita(req: AuthRequest, res: Response) {
+  try {
+    const { id } = req.params;
+    const { visitado } = req.body;
+    const cliente = await Cliente.findByPk(id as string);
+
+    if (!cliente) {
+      return res.status(404).json({
+        error: 'Cliente no encontrado'
+      })
+    }
+
+    const hoy = new Date().toISOString().split('T')[0];
+
+    await cliente.update({
+      ultimaVisitaFecha: visitado ? hoy : null,
+    });
+
+    return res.json(cliente);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Error al marcar visita' });
+  }
+}
+
+export async function listarDeudaVieja(req: AuthRequest, res: Response) {
+  try {
+    const dias = Number(req.query.dias) || 30;
+
+    const resultados = await sequelize.query(
+      `
+      SELECT
+        c.id,
+        c.nombre,
+        c.apellido,
+        c.saldoActual,
+        MAX(CASE WHEN h.montoPagado > 0 THEN h.fecha END) AS ultimoPago,
+        MIN(h.fecha) AS primeraEntrega
+      FROM clientes c
+      LEFT JOIN historiales h ON h.clienteId = c.id
+      WHERE c.saldoActual > 0
+      GROUP BY c.id, c.nombre, c.apellido, c.saldoActual
+      `,
+      { type: QueryTypes.SELECT }
+    );
+
+    const hoy = new Date();
+
+    const deudaVieja = (resultados as any[])
+      .map((c) => {
+        const referencia = c.ultimoPago ?? c.primeraEntrega;
+        if (!referencia) return null;
+
+        const diasSinPagar = Math.floor(
+          (hoy.getTime() - new Date(referencia).getTime()) / (1000 * 60 * 60 * 24)
+        );
+
+        return {
+          id: c.id,
+          nombre: c.nombre,
+          apellido: c.apellido,
+          saldoActual: Number(c.saldoActual),
+          diasSinPagar,
+        };
+      })
+      .filter((c) => c && c.diasSinPagar >= dias)
+      .sort((a, b) => b!.diasSinPagar - a!.diasSinPagar);
+
+    return res.json(deudaVieja);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Error al obtener deuda vieja' });
   }
 }
