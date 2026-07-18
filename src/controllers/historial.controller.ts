@@ -9,6 +9,7 @@ import SaldoEnvase from '../models/SaldoEnvase';
 import Historial from '../models/Historial';
 import HistorialDetalle from '../models/HistorialDetalle';
 import Usuario from '../models/Usuario';
+import MovimientoStock from '../models/MovimientoStock';
 
 interface DetalleInput {
     productoId: string;
@@ -126,13 +127,28 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
                 { cantidad: saldoEnvase.cantidad + diferencia },
                 { transaction: t }
             );
+
+            // 6.5. Descontar del stock del depósito y dejar registro del movimiento
+            await MovimientoStock.create(
+                {
+                    productoId: d.productoId,
+                    usuarioId: req.usuario!.id,
+                    tipo: 'salida',
+                    cantidad: d.cantidadEntregada,
+                    motivo: 'Entrega a cliente',
+                },
+                { transaction: t }
+            );
+            await Producto.decrement('stockActual', {
+                by: d.cantidadEntregada,
+                where: { id: d.productoId },
+                transaction: t,
+            });
         }
 
-        // 7. Actualizar el saldo del cliente
         // 7. Actualizar el saldo del cliente y marcarlo como visitado hoy
         const hoy = new Date().toISOString().split('T')[0];
         await cliente.update({ saldoActual: saldoFinal, ultimaVisitaFecha: hoy }, { transaction: t });
-        // Si llegamos hasta acá sin errores, confirmamos todo junto
         await t.commit();
 
         return res.status(201).json({ historial, detalles: detallesParaCrear });

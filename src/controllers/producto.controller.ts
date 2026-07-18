@@ -104,7 +104,7 @@ export async function desactivarProducto(req: AuthRequest, res: Response) {
 export async function actualizarProducto(req: AuthRequest, res: Response) {
     try {
         const { id } = req.params;
-        const { nombre, esRetornable } = req.body;
+        const { nombre, esRetornable, stockMinimo } = req.body;
 
         const producto = await Producto.findByPk(id as string);
         if (!producto) {
@@ -114,6 +114,7 @@ export async function actualizarProducto(req: AuthRequest, res: Response) {
         await producto.update({
             nombre: nombre ?? producto.nombre,
             esRetornable: esRetornable ?? producto.esRetornable,
+            stockMinimo: stockMinimo ?? producto.stockMinimo,
         });
 
         return res.json(producto);

@@ -2,7 +2,7 @@ import { DataTypes, Model, Optional } from 'sequelize';
 import sequelize from '../config/database';
 
 
-export type MetodoPago = 'efectivo' | 'transferencia';
+export type MetodoPago = 'efectivo' | 'transferencia' | 'mercadopago';
 
 interface HistorialAttributes {
     id: string;
@@ -59,7 +59,7 @@ Historial.init(
         saldoFinal: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
         observacion: { type: DataTypes.STRING(255), allowNull: true },
         metodoPago: {
-            type: DataTypes.ENUM('efectivo', 'transferencia'),
+            type: DataTypes.ENUM('efectivo', 'transferencia', 'mercadopago'),
             allowNull: false,
             defaultValue: 'efectivo',
         },

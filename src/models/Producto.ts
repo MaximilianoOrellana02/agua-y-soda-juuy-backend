@@ -6,10 +6,12 @@ interface ProductoAttributes {
     nombre: string;
     esRetornable: boolean;
     activo: boolean;
+    stockActual: number;
+    stockMinimo: number;
 }
 
 interface ProductoCreationAttributes
-    extends Optional<ProductoAttributes, 'id' | 'esRetornable' | 'activo'> { }
+    extends Optional<ProductoAttributes, 'id' | 'esRetornable' | 'activo' | 'stockActual' | 'stockMinimo'> { }
 
 class Producto extends Model<ProductoAttributes, ProductoCreationAttributes>
     implements ProductoAttributes {
@@ -17,6 +19,8 @@ class Producto extends Model<ProductoAttributes, ProductoCreationAttributes>
     public nombre!: string;
     public esRetornable!: boolean;
     public activo!: boolean;
+    public stockActual!: number;
+    public stockMinimo!: number;
 
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;
@@ -43,6 +47,16 @@ Producto.init(
             type: DataTypes.BOOLEAN,
             allowNull: false,
             defaultValue: true,
+        },
+        stockActual: {
+            type: DataTypes.INTEGER,
+            allowNull: false,
+            defaultValue: 0,
+        },
+        stockMinimo: {
+            type: DataTypes.INTEGER,
+            allowNull: false,
+            defaultValue: 0,
         },
     },
     {

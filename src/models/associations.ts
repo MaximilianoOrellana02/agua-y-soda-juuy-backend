@@ -6,6 +6,7 @@ import SaldoEnvase from "./SaldoEnvase";
 import Historial from "./Historial";
 import HistorialDetalle from "./HistorialDetalle";
 import Barrio from "./Barrio";
+import MovimientoStock from "./MovimientoStock";
 
 // Producto <-> PrecioProducto
 Producto.hasMany(PrecioProducto, { foreignKey: "productoId", as: "precios" });
@@ -43,6 +44,12 @@ HistorialDetalle.belongsTo(Producto, {
   foreignKey: "productoId",
   as: "producto",
 });
+
+
+Producto.hasMany(MovimientoStock, { foreignKey: 'productoId', as: 'movimientosStock' });
+MovimientoStock.belongsTo(Producto, { foreignKey: 'productoId', as: 'producto' });
+Usuario.hasMany(MovimientoStock, { foreignKey: 'usuarioId', as: 'movimientosStock' });
+MovimientoStock.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
 
 // Cliente <-> Barrio
 Barrio.hasMany(Cliente, { foreignKey: "barrioId", as: "clientes" });

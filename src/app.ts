@@ -5,8 +5,8 @@ import clienteRoutes from './routes/cliente.routes'
 import productoRoutes from './routes/producto.routes';
 import historialRoutes from './routes/historial.routes';
 import barrioRoutes from './routes/barrio.routes';
-
-
+import stockRoutes from './routes/stock.routes'
+import mercadopagoRoutes from './routes/mercadopago.routes';
 
 
 const app = express();
@@ -25,6 +25,8 @@ app.use('/api/clientes', clienteRoutes)
 app.use('/api/productos', productoRoutes);
 app.use('/api/historial', historialRoutes);
 app.use('/api/barrios', barrioRoutes);
+app.use('/api/stock', stockRoutes);
+app.use('/api/mercadopago', mercadopagoRoutes);
 
 
 export default app;
