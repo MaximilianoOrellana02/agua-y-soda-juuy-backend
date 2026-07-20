@@ -30,9 +30,12 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
             metodoPago?: 'efectivo' | 'transferencia'
         };
 
-        if (!clienteId || !detalles || detalles.length === 0) {
+        const hayDetalles = detalles && detalles.length > 0;
+        const hayPago = montoPagado != null && montoPagado > 0;
+
+        if (!clienteId || (!hayDetalles && !hayPago)) {
             await t.rollback();
-            return res.status(400).json({ error: 'clienteId y al menos un detalle son obligatorios' });
+            return res.status(400).json({ error: 'Tenés que cargar al menos un producto o un monto pagado' });
         }
 
         // 1. Buscar el cliente (bloqueado para esta transacción, evita condiciones de carrera)
@@ -46,7 +49,7 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
         const detallesParaCrear: any[] = [];
 
         // 2. Recorremos cada línea del detalle
-        for (const linea of detalles) {
+        for (const linea of detalles ?? []) {
             const producto = await Producto.findByPk(linea.productoId, { transaction: t });
             if (!producto) {
                 await t.rollback();
