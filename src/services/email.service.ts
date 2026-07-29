@@ -1,13 +1,16 @@
 import nodemailer from 'nodemailer';
 
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
     auth: {
         user: process.env.GMAIL_USER,
         pass: process.env.GMAIL_APP_PASSWORD,
     },
-    family: 4, // fuerza IPv4, porque Render no tiene salida IPv6 habilitada
-} as nodemailer.TransportOptions);
+    family: 4, // fuerza IPv4 explícitamente
+    connectionTimeout: 10000, // si no conecta en 10s, fallar rápido en vez de colgarse
+});
 
 export async function enviarEmailRecuperacion(destinatario: string, nombreCompleto: string, link: string) {
     await transporter.sendMail({
