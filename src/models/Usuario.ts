@@ -6,6 +6,7 @@ interface UsuarioAttributes {
     username: string;
     passwordHash: string;
     nombreCompleto: string;
+    email: string;
 }
 
 interface UsuarioCreationAttributes extends Optional<UsuarioAttributes, 'id'> { }
@@ -16,6 +17,7 @@ class Usuario extends Model<UsuarioAttributes, UsuarioCreationAttributes>
     public username!: string;
     public passwordHash!: string;
     public nombreCompleto!: string;
+    public email!: string;
 
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;
@@ -41,6 +43,11 @@ Usuario.init(
             type: DataTypes.STRING(100),
             allowNull: false,
         },
+        email: {
+            type: DataTypes.STRING(150),
+            allowNull: false,
+            unique: true
+        }
     },
     {
         sequelize,
