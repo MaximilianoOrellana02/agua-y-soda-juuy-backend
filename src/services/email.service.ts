@@ -8,9 +8,10 @@ const transporter = nodemailer.createTransport({
         user: process.env.GMAIL_USER,
         pass: process.env.GMAIL_APP_PASSWORD,
     },
-    family: 4, // fuerza IPv4 explícitamente
-    connectionTimeout: 10000, // si no conecta en 10s, fallar rápido en vez de colgarse
-});
+    family: 4,
+    connectionTimeout: 10000,
+} as any);
+
 
 export async function enviarEmailRecuperacion(destinatario: string, nombreCompleto: string, link: string) {
     await transporter.sendMail({
