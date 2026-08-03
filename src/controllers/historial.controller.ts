@@ -275,3 +275,48 @@ export async function resumenHistorial(req: AuthRequest, res: Response) {
         return res.status(500).json({ error: 'Error al obtener el resumen' });
     }
 }
+
+export async function resumenHoy(req: AuthRequest, res: Response) {
+    try {
+        const inicio = new Date();
+        inicio.setHours(0, 0, 0, 0);
+        const fin = new Date();
+        fin.setHours(23, 59, 59, 999);
+
+        const totales = await Historial.findOne({
+            where: { fecha: { [Op.between]: [inicio, fin] } },
+            attributes: [
+                [fn('SUM', col('montoPagado')), 'cobrado'],
+                [fn('COUNT', col('id')), 'entregasCount'],
+            ],
+            raw: true,
+        });
+
+        const cantidades = await HistorialDetalle.findAll({
+            include: [
+                {
+                    model: Historial,
+                    as: 'historial',
+                    attributes: [],
+                    where: { fecha: { [Op.between]: [inicio, fin] } },
+                },
+            ],
+            attributes: [
+                [fn('SUM', col('cantidadEntregada')), 'entregados'],
+                [fn('SUM', col('cantidadEnvaseDevuelto')), 'devueltos'],
+            ],
+            raw: true,
+        });
+
+        return res.json({
+            cobrado: Number((totales as any)?.cobrado ?? 0),
+            entregasCount: Number((totales as any)?.entregasCount ?? 0),
+            entregados: Number((cantidades[0] as any)?.entregados ?? 0),
+            devueltos: Number((cantidades[0] as any)?.devueltos ?? 0),
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ error: 'Error al obtener el resumen del día' });
+
+    }
+}

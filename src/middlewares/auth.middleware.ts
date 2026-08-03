@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import Usuario from "../models/Usuario";
 
 const JWT_SECRET = process.env.JWT_SECRET as string;
 
@@ -10,7 +11,7 @@ export interface AuthRequest extends Request {
     };
 }
 
-export function verificarToken(req: AuthRequest, res: Response, next: NextFunction) {
+export async function verificarToken(req: AuthRequest, res: Response, next: NextFunction) {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -21,6 +22,12 @@ export function verificarToken(req: AuthRequest, res: Response, next: NextFuncti
 
     try {
         const payload = jwt.verify(token, JWT_SECRET) as { id: string; username: string };
+        
+        const usuarioExiste = await Usuario.findByPk(payload.id);
+        if (!usuarioExiste) {
+            return res.status(401).json({ error: 'Usuario no encontrado o sesión inválida' });
+        }
+
         req.usuario = payload;
         next();
     } catch (error) {
