@@ -19,6 +19,8 @@ export async function crearCliente(req: AuthRequest, res: Response) {
       tipoCliente,
       barrioId,
       categoria,
+      latitud,
+      longitud,
     } = req.body;
 
     if (!nombre || !apellido) {
@@ -27,9 +29,15 @@ export async function crearCliente(req: AuthRequest, res: Response) {
         .json({ error: "Nombre y apellido son obligatorios" });
     }
 
-    let coordenadas = null;
-    if (direccion) {
-      coordenadas = await geocodificarDireccion(direccion, localidad);
+    let lat = latitud !== undefined ? latitud : null;
+    let lng = longitud !== undefined ? longitud : null;
+
+    if ((lat == null || lng == null) && direccion) {
+      const coordenadas = await geocodificarDireccion(direccion, localidad);
+      if (coordenadas) {
+        lat = coordenadas.latitud;
+        lng = coordenadas.longitud;
+      }
     }
 
     const cliente = await Cliente.create({
@@ -41,8 +49,8 @@ export async function crearCliente(req: AuthRequest, res: Response) {
       barrioId,
       categoria,
       tipoCliente: tipoCliente || "particular",
-      latitud: coordenadas?.latitud ?? null,
-      longitud: coordenadas?.longitud ?? null,
+      latitud: lat,
+      longitud: lng,
     });
 
     return res.status(201).json(cliente);
@@ -113,19 +121,23 @@ export async function actualizarCliente(req: AuthRequest, res: Response) {
       tipoCliente,
       barrioId,
       categoria,
+      latitud: bodyLat,
+      longitud: bodyLng,
     } = req.body;
 
-    let latitud = cliente.latitud;
-    let longitud = cliente.longitud;
+    let latitud = bodyLat !== undefined ? bodyLat : cliente.latitud;
+    let longitud = bodyLng !== undefined ? bodyLng : cliente.longitud;
 
     const direccionCambio = direccion && direccion !== cliente.direccion;
-    if (direccionCambio) {
+    if (direccionCambio && bodyLat === undefined) {
       const coordenadas = await geocodificarDireccion(
         direccion,
         localidad ?? cliente.localidad,
       );
-      latitud = coordenadas?.latitud ?? null;
-      longitud = coordenadas?.longitud ?? null;
+      if (coordenadas) {
+        latitud = coordenadas.latitud;
+        longitud = coordenadas.longitud;
+      }
     }
 
     await cliente.update({
