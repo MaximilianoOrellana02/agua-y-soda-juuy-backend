@@ -7,6 +7,7 @@ import historialRoutes from './routes/historial.routes';
 import barrioRoutes from './routes/barrio.routes';
 import stockRoutes from './routes/stock.routes'
 import mercadopagoRoutes from './routes/mercadopago.routes';
+import pedidoRoutes from './routes/pedido.routes'
 
 
 const app = express();
@@ -19,7 +20,7 @@ app.use(cors({ origin: origenesPermitidos }));
 
 app.use(express.json());
 
-// Acá vamos a ir agregando las rutas a medida que las creemos, ej:
+// Acá rutas
 app.use('/api/usuarios', usuarioRoutes)
 app.use('/api/clientes', clienteRoutes)
 app.use('/api/productos', productoRoutes);
@@ -27,6 +28,7 @@ app.use('/api/historial', historialRoutes);
 app.use('/api/barrios', barrioRoutes);
 app.use('/api/stock', stockRoutes);
 app.use('/api/mercadopago', mercadopagoRoutes);
+app.use('/api/pedidos', pedidoRoutes)
 
 
 export default app;
