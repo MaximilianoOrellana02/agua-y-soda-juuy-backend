@@ -1,36 +1,25 @@
-import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
-import Usuario from "../models/Usuario";
-
-const JWT_SECRET = process.env.JWT_SECRET as string;
+import { Request, Response, NextFunction } from 'express';
+import Usuario from '../models/Usuario';
+import { Sesion, verificarSesion } from '../services/token.service';
+import { responderErrorUsuario } from '../utils/usuario.error';
 
 export interface AuthRequest extends Request {
-    usuario?: {
-        id: string;
-        username: string;
-    };
+    usuario?: Sesion;
 }
 
 export async function verificarToken(req: AuthRequest, res: Response, next: NextFunction) {
-    const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ error: 'Token no proporcionado' });
-    }
-
-    const token = authHeader.split(' ')[1];
-
+    const match = /^Bearer ([^\s]+)$/i.exec(req.headers.authorization || '');
+    if (!match) return res.status(401).json({ error: 'Token no proporcionado o invalido' });
     try {
-        const payload = jwt.verify(token, JWT_SECRET) as { id: string; username: string };
-        
-        const usuarioExiste = await Usuario.findByPk(payload.id);
-        if (!usuarioExiste) {
-            return res.status(401).json({ error: 'Usuario no encontrado o sesión inválida' });
+        const payload = verificarSesion(match[1]);
+        if (!payload) return res.status(401).json({ error: 'Token invalido o expirado' });
+        const usuario = await Usuario.findByPk(payload.id);
+        if (!usuario || usuario.sessionVersion !== payload.sessionVersion) {
+            return res.status(401).json({ error: 'Usuario no encontrado o sesion invalida' });
         }
-
-        req.usuario = payload;
-        next();
+        req.usuario = { id: usuario.id, username: usuario.username, sessionVersion: usuario.sessionVersion };
     } catch (error) {
-        return res.status(401).json({ error: 'Token inválido o expirado' });
+        return responderErrorUsuario(res, error, 'Error al verificar la sesion');
     }
+    next();
 }

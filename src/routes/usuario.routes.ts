@@ -8,15 +8,16 @@ import {
     restablecerPassword
 } from '../controllers/usuario.controller'
 import { verificarToken } from "../middlewares/auth.middleware";
+import { limitarIntentos } from '../middlewares/usuario-rate-limit.middleware';
 
-const router = Router();
+export function crearUsuarioRouter() {
+    const router = Router();
+    router.post('/registro', limitarIntentos(20), verificarToken, registrar);
+    router.post('/login', limitarIntentos(15), login);
+    router.put('/password', limitarIntentos(10), verificarToken, cambiarPassword);
+    router.post('/recuperar', limitarIntentos(5), solicitarRecuperacion);
+    router.post('/restablecer', limitarIntentos(10), restablecerPassword);
+    return router;
+}
 
-router.post('/registro', verificarToken, registrar)
-router.post('/login', login)
-router.put('/password', verificarToken, cambiarPassword);
-router.post('/recuperar', solicitarRecuperacion);
-router.post('/restablecer', restablecerPassword)
-
-
-
-export default router
+export default crearUsuarioRouter();

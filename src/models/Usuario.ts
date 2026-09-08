@@ -7,9 +7,12 @@ interface UsuarioAttributes {
     passwordHash: string;
     nombreCompleto: string;
     email: string;
+    sessionVersion: number;
+    resetTokenHash: string | null;
+    resetTokenExpiresAt: Date | null;
 }
 
-interface UsuarioCreationAttributes extends Optional<UsuarioAttributes, 'id'> { }
+interface UsuarioCreationAttributes extends Optional<UsuarioAttributes, 'id' | 'sessionVersion' | 'resetTokenHash' | 'resetTokenExpiresAt'> { }
 
 class Usuario extends Model<UsuarioAttributes, UsuarioCreationAttributes>
     implements UsuarioAttributes {
@@ -18,6 +21,9 @@ class Usuario extends Model<UsuarioAttributes, UsuarioCreationAttributes>
     public passwordHash!: string;
     public nombreCompleto!: string;
     public email!: string;
+    public sessionVersion!: number;
+    public resetTokenHash!: string | null;
+    public resetTokenExpiresAt!: Date | null;
 
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;
@@ -34,6 +40,8 @@ Usuario.init(
             type: DataTypes.STRING(50),
             allowNull: false,
             unique: true,
+            set(value: string) { this.setDataValue('username', typeof value === 'string' ? value.trim() : value); },
+            validate: { notEmpty: true, len: [1, 50] },
         },
         passwordHash: {
             type: DataTypes.STRING(255),
@@ -42,12 +50,19 @@ Usuario.init(
         nombreCompleto: {
             type: DataTypes.STRING(100),
             allowNull: false,
+            set(value: string) { this.setDataValue('nombreCompleto', typeof value === 'string' ? value.trim() : value); },
+            validate: { notEmpty: true, len: [1, 100] },
         },
         email: {
             type: DataTypes.STRING(150),
             allowNull: false,
-            unique: true
-        }
+            unique: true,
+            set(value: string) { this.setDataValue('email', typeof value === 'string' ? value.trim().toLowerCase() : value); },
+            validate: { isEmail: true, len: [1, 150] },
+        },
+        sessionVersion: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
+        resetTokenHash: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null, unique: true },
+        resetTokenExpiresAt: { type: DataTypes.DATE, allowNull: true, defaultValue: null },
     },
     {
         sequelize,
