@@ -2,21 +2,24 @@ import { Response } from "express";
 import { AuthRequest } from "../middlewares/auth.middleware";
 import Pedido from "../models/Pedido";
 import Cliente from "../models/Cliente";
+import sequelize from '../config/database';
+import { esUuid } from '../utils/cliente.validation';
 
 export async function crearPedido(req: AuthRequest, res: Response) {
     try {
         const { clienteId, detalle } = req.body;
-        if (!clienteId) {
+        if (!esUuid(clienteId)) {
             return res.status(400).json({
-                error: "Cliente es obligatorio"
+                error: "Cliente debe ser un UUID valido"
             })
         }
 
-        const pedido = await Pedido.create({
-            clienteId,
-            detalle: detalle || null,
-            usuarioId: req.usuario!.id
-        })
+        const pedido = await sequelize.transaction(async transaction => {
+            const cliente = await Cliente.findByPk(clienteId, { transaction, lock: transaction.LOCK.UPDATE });
+            if (!cliente) return null;
+            return Pedido.create({ clienteId, detalle: detalle || null, usuarioId: req.usuario!.id }, { transaction });
+        });
+        if (!pedido) return res.status(404).json({ error: 'Cliente no encontrado' });
         return res.status(201).json(pedido);
 
     } catch (error) {
@@ -29,7 +32,7 @@ export async function listarPedidosPendientes(req: AuthRequest, res: Response) {
     try {
         const pedidos = await Pedido.findAll({
             where: { estado: 'pendiente' },
-            include: [{ model: Cliente, as: "cliente", attributes: ["id", "nombre", "apellido", "telefono"] }],
+            include: [{ model: Cliente, as: "cliente", attributes: ["id", "nombre", "apellido", "telefono"], paranoid: false }],
             order: [["fecha", "ASC"]]
         })
 

@@ -1,66 +1,46 @@
 import { Response } from "express";
+import { Op, QueryTypes } from "sequelize";
 import { AuthRequest } from "../middlewares/auth.middleware";
 import Cliente from "../models/Cliente";
 import SaldoEnvase from "../models/SaldoEnvase";
 import Producto from "../models/Producto";
 import Barrio from "../models/Barrio";
-import { geocodificarDireccion } from "../utils/geocode";
-import { QueryTypes } from "sequelize";
+import Pedido from "../models/Pedido";
 import sequelize from "../config/database";
+import { geocodificarDireccion } from "../utils/geocode";
+import {
+  cuerpoCliente,
+  DatosClienteInvalidos,
+  validarCliente,
+  validarCoordenadas,
+  validarDias,
+} from "../utils/cliente.validation";
+import { responderErrorCliente } from "../utils/cliente.error";
+import { diasComercialesDesde, fechaComercial } from "../utils/fecha-comercial";
 
 export async function crearCliente(req: AuthRequest, res: Response) {
   try {
-    const {
-      nombre,
-      apellido,
-      direccion,
-      telefono,
-      localidad,
-      tipoCliente,
-      barrioId,
-      categoria,
-      latitud,
-      longitud,
-    } = req.body;
-
-    if (!nombre || !apellido) {
-      return res
-        .status(400)
-        .json({ error: "Nombre y apellido son obligatorios" });
+    const datos = validarCliente(req.body, true);
+    if (datos.barrioId && !(await Barrio.findByPk(datos.barrioId)))
+      throw new DatosClienteInvalidos("El barrio no existe");
+    if (datos.latitud === undefined && datos.direccion) {
+      const coordenadas = await geocodificarDireccion(
+        datos.direccion,
+        datos.localidad,
+      );
+      Object.assign(datos, coordenadas ?? { latitud: null, longitud: null });
     }
-
-    let lat = latitud !== undefined ? latitud : null;
-    let lng = longitud !== undefined ? longitud : null;
-
-    if ((lat == null || lng == null) && direccion) {
-      const coordenadas = await geocodificarDireccion(direccion, localidad);
-      if (coordenadas) {
-        lat = coordenadas.latitud;
-        lng = coordenadas.longitud;
-      }
-    }
-
     const cliente = await Cliente.create({
-      nombre,
-      apellido,
-      direccion,
-      telefono,
-      localidad,
-      barrioId,
-      categoria,
-      tipoCliente: tipoCliente || "particular",
-      latitud: lat,
-      longitud: lng,
+      ...datos,
+      nombre: datos.nombre!,
+      apellido: datos.apellido!,
     });
-
     return res.status(201).json(cliente);
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "Error al crear cliente" });
+    return responderErrorCliente(res, error, "Error al crear cliente");
   }
 }
 
-// Listar todos los clientes
 export async function listarClientes(req: AuthRequest, res: Response) {
   try {
     const clientes = await Cliente.findAll({
@@ -79,230 +59,205 @@ export async function listarClientes(req: AuthRequest, res: Response) {
     });
     return res.json(clientes);
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "Error al listar clientes" });
+    return responderErrorCliente(res, error, "Error al listar clientes");
   }
 }
 
-// Ver un cliente puntual
 export async function obtenerCliente(req: AuthRequest, res: Response) {
   try {
-    const { id } = req.params;
-    const cliente = await Cliente.findByPk(id as string, {
+    const cliente = await Cliente.findByPk(req.params.id as string, {
       include: [{ model: Barrio, as: "barrio", attributes: ["id", "nombre"] }],
     });
-
-    if (!cliente) {
+    if (!cliente)
       return res.status(404).json({ error: "Cliente no encontrado" });
-    }
-
     return res.json(cliente);
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "Error al obtener cliente" });
+    return responderErrorCliente(res, error, "Error al obtener cliente");
   }
 }
-// Actualizar un cliente
+
 export async function actualizarCliente(req: AuthRequest, res: Response) {
   try {
-    const { id } = req.params;
-    const cliente = await Cliente.findByPk(id as string);
-
-    if (!cliente) {
-      return res.status(404).json({ error: "Cliente no encontrado" });
-    }
-
-    const {
-      nombre,
-      apellido,
-      direccion,
-      telefono,
-      localidad,
-      tipoCliente,
-      barrioId,
-      categoria,
-      latitud: bodyLat,
-      longitud: bodyLng,
-    } = req.body;
-
-    let latitud = bodyLat !== undefined ? bodyLat : cliente.latitud;
-    let longitud = bodyLng !== undefined ? bodyLng : cliente.longitud;
-
-    const direccionCambio = direccion && direccion !== cliente.direccion;
-    if (direccionCambio && bodyLat === undefined) {
-      const coordenadas = await geocodificarDireccion(
-        direccion,
-        localidad ?? cliente.localidad,
-      );
-      if (coordenadas) {
-        latitud = coordenadas.latitud;
-        longitud = coordenadas.longitud;
+    const datos = validarCliente(req.body, false);
+    const cliente = await sequelize.transaction(async (transaction) => {
+      const actual = await Cliente.findByPk(req.params.id as string, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!actual) return null;
+      if (
+        datos.barrioId &&
+        !(await Barrio.findByPk(datos.barrioId, { transaction }))
+      )
+        throw new DatosClienteInvalidos("El barrio no existe");
+      const cambioDireccion =
+        datos.direccion !== undefined && datos.direccion !== actual.direccion;
+      const cambioLocalidad =
+        datos.localidad !== undefined && datos.localidad !== actual.localidad;
+      if ((cambioDireccion || cambioLocalidad) && datos.latitud === undefined) {
+        const direccion =
+          datos.direccion === undefined ? actual.direccion : datos.direccion;
+        const localidad =
+          datos.localidad === undefined ? actual.localidad : datos.localidad;
+        const coordenadas = direccion
+          ? await geocodificarDireccion(direccion, localidad)
+          : null;
+        Object.assign(datos, coordenadas ?? { latitud: null, longitud: null });
       }
-    }
-
-    await cliente.update({
-      nombre: nombre ?? cliente.nombre,
-      apellido: apellido ?? cliente.apellido,
-      direccion: direccion ?? cliente.direccion,
-      telefono: telefono ?? cliente.telefono,
-      localidad: localidad ?? cliente.localidad,
-      tipoCliente: tipoCliente ?? cliente.tipoCliente,
-      barrioId: barrioId ?? cliente.barrioId,
-      categoria: categoria ?? cliente.categoria,
-      latitud,
-      longitud,
+      return actual.update(datos, { transaction });
     });
-
+    if (!cliente)
+      return res.status(404).json({ error: "Cliente no encontrado" });
     return res.json(cliente);
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "Error al actualizar cliente" });
+    return responderErrorCliente(res, error, "Error al actualizar cliente");
   }
 }
 
-// Eliminar un cliente
 export async function eliminarCliente(req: AuthRequest, res: Response) {
   try {
-    const { id } = req.params;
-    const cliente = await Cliente.findByPk(id as string);
-
-    if (!cliente) {
+    const resultado = await sequelize.transaction(async (transaction) => {
+      const cliente = await Cliente.findByPk(req.params.id as string, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!cliente) return "no-encontrado";
+      const envases = await SaldoEnvase.count({
+        where: { clienteId: cliente.id, cantidad: { [Op.ne]: 0 } },
+        transaction,
+      });
+      const pedidos = await Pedido.count({
+        where: { clienteId: cliente.id, estado: "pendiente" },
+        transaction,
+      });
+      if (cliente.saldoActual !== 0 || envases || pedidos) return "pendientes";
+      await cliente.destroy({ transaction });
+      return "eliminado";
+    });
+    if (resultado === "no-encontrado")
       return res.status(404).json({ error: "Cliente no encontrado" });
-    }
-
-    await cliente.destroy();
+    if (resultado === "pendientes")
+      return res
+        .status(409)
+        .json({
+          error:
+            "Resolver saldo, envases y pedidos pendientes antes de dar de baja al cliente",
+        });
     return res.status(204).send();
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "Error al eliminar cliente" });
+    return responderErrorCliente(res, error, "Error al eliminar cliente");
   }
 }
 
-//Ver saldo de envases de un cliente (cuantos bideones tiene sin devolver, por producto)
 export async function obtenerSaldoEnvases(req: AuthRequest, res: Response) {
   try {
-    const { id } = req.params;
-
-    const cliente = await Cliente.findByPk(id as string);
-    if (!cliente) {
-      return res.status(404).json({
-        error: "Cliente no encontrado",
-      });
-    }
-
+    const id = req.params.id as string;
+    if (!(await Cliente.findByPk(id)))
+      return res.status(404).json({ error: "Cliente no encontrado" });
     const saldos = await SaldoEnvase.findAll({
-      where: { clienteId: id },
+      where: { clienteId: id, cantidad: { [Op.ne]: 0 } },
       include: [
-        {
-          model: Producto,
-          as: "producto",
-          attributes: ["id", "nombre"],
-        },
+        { model: Producto, as: "producto", attributes: ["id", "nombre"] },
       ],
       order: [[{ model: Producto, as: "producto" }, "nombre", "ASC"]],
     });
-
-    const saldoConEnvases = saldos.filter((s) => s.cantidad !== 0);
-    return res.json(saldoConEnvases);
+    return res.json(saldos);
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "Error al obtener saldo de envases" });
+    return responderErrorCliente(
+      res,
+      error,
+      "Error al obtener saldo de envases",
+    );
   }
 }
 
 export async function ajustarUbicacion(req: AuthRequest, res: Response) {
   try {
-    const { id } = req.params;
-    const { latitud, longitud } = req.body;
-
-    if (latitud == null || longitud == null) {
-      return res.status(400).json({ error: 'Latitud y longitud son obligatorias' });
-    }
-
-    const cliente = await Cliente.findByPk(id as string);
-    if (!cliente) {
-      return res.status(404).json({ error: 'Cliente no encontrado' });
-    }
-
-    await cliente.update({ latitud, longitud });
+    const coordenadas = validarCoordenadas(cuerpoCliente(req.body));
+    const cliente = await sequelize.transaction(async (transaction) => {
+      const actual = await Cliente.findByPk(req.params.id as string, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      return actual ? actual.update(coordenadas, { transaction }) : null;
+    });
+    if (!cliente)
+      return res.status(404).json({ error: "Cliente no encontrado" });
     return res.json(cliente);
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Error al ajustar ubicación' });
+    return responderErrorCliente(res, error, "Error al ajustar ubicacion");
   }
 }
 
 export async function marcarVisita(req: AuthRequest, res: Response) {
   try {
-    const { id } = req.params;
-    const { visitado } = req.body;
-    const cliente = await Cliente.findByPk(id as string);
-
-    if (!cliente) {
-      return res.status(404).json({
-        error: 'Cliente no encontrado'
-      })
-    }
-
-    const hoy = new Date().toISOString().split('T')[0];
-
-    await cliente.update({
-      ultimaVisitaFecha: visitado ? hoy : null,
+    const { visitado } = cuerpoCliente(req.body);
+    if (typeof visitado !== "boolean")
+      throw new DatosClienteInvalidos("visitado debe ser booleano");
+    const cliente = await sequelize.transaction(async (transaction) => {
+      const actual = await Cliente.findByPk(req.params.id as string, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      return actual
+        ? actual.update(
+            { ultimaVisitaFecha: visitado ? fechaComercial() : null },
+            { transaction },
+          )
+        : null;
     });
-
+    if (!cliente)
+      return res.status(404).json({ error: "Cliente no encontrado" });
     return res.json(cliente);
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Error al marcar visita' });
+    return responderErrorCliente(res, error, "Error al marcar visita");
   }
+}
+
+interface DeudaCliente {
+  id: string;
+  nombre: string;
+  apellido: string;
+  saldoActual: string | number;
+  ultimoPago: Date | string | null;
+  primeraEntrega: Date | string | null;
 }
 
 export async function listarDeudaVieja(req: AuthRequest, res: Response) {
   try {
-    const dias = Number(req.query.dias) || 30;
-
-    const resultados = await sequelize.query(
+    const dias = validarDias(req.query.dias);
+    const resultados = await sequelize.query<DeudaCliente>(
       `
-      SELECT
-        c.id,
-        c.nombre,
-        c.apellido,
-        c.saldoActual,
-        MAX(CASE WHEN h.montoPagado > 0 THEN h.fecha END) AS ultimoPago,
-        MIN(h.fecha) AS primeraEntrega
-      FROM clientes c
-      LEFT JOIN historiales h ON h.clienteId = c.id
-      WHERE c.saldoActual > 0
-      GROUP BY c.id, c.nombre, c.apellido, c.saldoActual
-      `,
-      { type: QueryTypes.SELECT }
+            SELECT c.id, c.nombre, c.apellido, c.saldoActual,
+                MAX(CASE WHEN h.montoPagado > 0 THEN h.fecha END) AS ultimoPago,
+                MIN(h.fecha) AS primeraEntrega
+            FROM clientes c
+            LEFT JOIN historiales h ON h.clienteId = c.id
+            WHERE c.saldoActual > 0 AND c.deletedAt IS NULL
+            GROUP BY c.id, c.nombre, c.apellido, c.saldoActual
+        `,
+      { type: QueryTypes.SELECT },
     );
-
     const hoy = new Date();
-
-    const deudaVieja = (resultados as any[])
-      .map((c) => {
-        const referencia = c.ultimoPago ?? c.primeraEntrega;
-        if (!referencia) return null;
-
-        const diasSinPagar = Math.floor(
-          (hoy.getTime() - new Date(referencia).getTime()) / (1000 * 60 * 60 * 24)
-        );
-
-        return {
-          id: c.id,
-          nombre: c.nombre,
-          apellido: c.apellido,
-          saldoActual: Number(c.saldoActual),
-          diasSinPagar,
-        };
+    const deudaVieja = resultados
+      .flatMap((cliente) => {
+        const referencia = cliente.ultimoPago ?? cliente.primeraEntrega;
+        if (!referencia) return [];
+        const diasSinPagar = diasComercialesDesde(new Date(referencia), hoy);
+        if (diasSinPagar < dias) return [];
+        return [
+          {
+            id: cliente.id,
+            nombre: cliente.nombre,
+            apellido: cliente.apellido,
+            saldoActual: Number(cliente.saldoActual),
+            diasSinPagar,
+          },
+        ];
       })
-      .filter((c) => c && c.diasSinPagar >= dias)
-      .sort((a, b) => b!.diasSinPagar - a!.diasSinPagar);
-
+      .sort((a, b) => b.diasSinPagar - a.diasSinPagar);
     return res.json(deudaVieja);
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: 'Error al obtener deuda vieja' });
+    return responderErrorCliente(res, error, "Error al obtener deuda vieja");
   }
 }

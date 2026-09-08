@@ -10,6 +10,7 @@ import Historial from '../models/Historial';
 import HistorialDetalle from '../models/HistorialDetalle';
 import Usuario from '../models/Usuario';
 import MovimientoStock from '../models/MovimientoStock';
+import { fechaComercial } from '../utils/fecha-comercial';
 
 interface DetalleInput {
     productoId: string;
@@ -150,7 +151,7 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
         }
 
         // 7. Actualizar el saldo del cliente y marcarlo como visitado hoy
-        const hoy = new Date().toISOString().split('T')[0];
+        const hoy = fechaComercial();
         await cliente.update({ saldoActual: saldoFinal, ultimaVisitaFecha: hoy }, { transaction: t });
         await t.commit();
 
@@ -204,7 +205,7 @@ export async function listarHistorial(req: AuthRequest, res: Response) {
         const { rows, count } = await Historial.findAndCountAll({
             where,
             include: [
-                { model: Cliente, as: 'cliente', attributes: ['id', 'nombre', 'apellido'] },
+                { model: Cliente, as: 'cliente', attributes: ['id', 'nombre', 'apellido'], paranoid: false },
                 { model: Usuario, as: 'usuario', attributes: ['id', 'nombreCompleto'] },
             ],
             order: [['fecha', 'DESC']],

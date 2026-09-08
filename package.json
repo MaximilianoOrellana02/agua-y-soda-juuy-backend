@@ -10,8 +10,8 @@
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "npm run build && node --test tests/usuario.unit.test.cjs",
-    "test:integration": "npm run build && node --test tests/usuario.integration.test.cjs",
+    "test": "npm run build && node --test tests/usuario.unit.test.cjs tests/cliente.unit.test.cjs",
+    "test:integration": "npm run build && node --test tests/usuario.integration.test.cjs tests/cliente.integration.test.cjs",
     "db:migrate": "sequelize-cli db:migrate"
   },
   "dependencies": {
