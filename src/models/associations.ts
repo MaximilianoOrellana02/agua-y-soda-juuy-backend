@@ -53,8 +53,8 @@ Usuario.hasMany(MovimientoStock, { foreignKey: 'usuarioId', as: 'movimientosStoc
 MovimientoStock.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
 
 // Cliente <-> Barrio
-Barrio.hasMany(Cliente, { foreignKey: "barrioId", as: "clientes" });
-Cliente.belongsTo(Barrio, { foreignKey: "barrioId", as: "barrio" });
+Barrio.hasMany(Cliente, { foreignKey: "barrioId", as: "clientes", onDelete: 'RESTRICT', onUpdate: 'CASCADE' });
+Cliente.belongsTo(Barrio, { foreignKey: "barrioId", as: "barrio", onDelete: 'RESTRICT', onUpdate: 'CASCADE' });
 
 
 //Pedidos

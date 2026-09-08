@@ -1,10 +1,11 @@
 import { DataTypes, Model, Optional } from "sequelize";
 import sequelize from "../config/database";
+import { DiaVisita, diasBarrio, nombreBarrio } from '../utils/barrio.validation';
 
 interface BarrioAttributes {
   id: string;
   nombre: string;
-  diasVisita: string[];
+  diasVisita: DiaVisita[];
 }
 
 interface BarrioCreationAttributes extends Optional<
@@ -18,7 +19,7 @@ class Barrio
 {
   public id!: string;
   public nombre!: string;
-  public diasVisita!: string[];
+  public diasVisita!: DiaVisita[];
 
   public readonly createdAt!: Date;
   public readonly updatedAt!: Date;
@@ -35,11 +36,15 @@ Barrio.init(
       type: DataTypes.STRING(100),
       allowNull: false,
       unique: true,
+      // El setter solo normaliza; las reglas viven en validate() para que build() nunca lance.
+      set(value: unknown) { this.setDataValue('nombre', (typeof value === 'string' ? value.trim() : value) as string); },
+      validate: { nombreValido(value: unknown) { nombreBarrio(value); } },
     },
     diasVisita: {
       type: DataTypes.JSON,
       allowNull: false,
       defaultValue: [],
+      validate: { diasValidos(value: unknown) { diasBarrio(value); } },
     },
   },
   {

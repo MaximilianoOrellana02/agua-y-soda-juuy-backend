@@ -1,8 +1,9 @@
 import { DataTypes, Model, Optional } from 'sequelize';
 import sequelize from '../config/database';
+import { uuidDeModelo } from '../utils/cliente.validation';
+import { IMPORTE_MAXIMO, METODOS_PAGO, MetodoPago as Metodo, OBSERVACION_MAXIMA } from '../utils/historial.validation';
 
-
-export type MetodoPago = 'efectivo' | 'transferencia' | 'mercadopago';
+export type MetodoPago = Metodo;
 
 interface HistorialAttributes {
     id: string;
@@ -20,6 +21,16 @@ interface HistorialAttributes {
 
 interface HistorialCreationAttributes
     extends Optional<HistorialAttributes, 'id' | 'fecha' | 'observacion' | 'metodoPago'> { }
+
+// MySQL devuelve DECIMAL como texto; la API siempre expone los importes como numero.
+function decimal(campo: keyof HistorialAttributes, extra: object = {}) {
+    return {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: false,
+        get(this: Historial) { const value = this.getDataValue(campo); return value == null ? value : Number(value); },
+        ...extra,
+    };
+}
 
 class Historial extends Model<HistorialAttributes, HistorialCreationAttributes>
     implements HistorialAttributes {
@@ -46,22 +57,32 @@ Historial.init(
             defaultValue: DataTypes.UUIDV4,
             primaryKey: true,
         },
-        clienteId: { type: DataTypes.UUID, allowNull: false },
-        usuarioId: { type: DataTypes.UUID, allowNull: false },
+        clienteId: { type: DataTypes.UUID, allowNull: false, validate: { uuidValido: uuidDeModelo } },
+        usuarioId: { type: DataTypes.UUID, allowNull: false, validate: { uuidValido: uuidDeModelo } },
         fecha: {
-            type: DataTypes.DATE,
+            type: DataTypes.DATE(3),
             allowNull: false,
             defaultValue: DataTypes.NOW,
         },
-        saldoAnterior: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
-        importeTotal: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
-        montoPagado: { type: DataTypes.DECIMAL(10, 2), allowNull: false, defaultValue: 0 },
-        saldoFinal: { type: DataTypes.DECIMAL(10, 2), allowNull: false },
-        observacion: { type: DataTypes.STRING(255), allowNull: true },
+        // Los saldos pueden ser negativos (credito a favor del cliente); importes y pagos no.
+        saldoAnterior: decimal('saldoAnterior'),
+        importeTotal: decimal('importeTotal', { validate: { min: 0, max: IMPORTE_MAXIMO } }),
+        montoPagado: decimal('montoPagado', { defaultValue: 0, validate: { min: 0, max: IMPORTE_MAXIMO } }),
+        saldoFinal: decimal('saldoFinal'),
+        observacion: {
+            type: DataTypes.STRING(OBSERVACION_MAXIMA),
+            allowNull: true,
+            set(value: unknown) {
+                const texto = typeof value === 'string' ? value.trim() : value;
+                this.setDataValue('observacion', (texto === '' ? null : texto) as string | null);
+            },
+            validate: { len: [1, OBSERVACION_MAXIMA] },
+        },
         metodoPago: {
-            type: DataTypes.ENUM('efectivo', 'transferencia', 'mercadopago'),
+            type: DataTypes.ENUM(...METODOS_PAGO),
             allowNull: false,
             defaultValue: 'efectivo',
+            validate: { isIn: [[...METODOS_PAGO]] },
         },
     },
     {

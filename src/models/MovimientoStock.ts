@@ -1,7 +1,9 @@
 import { DataTypes, Model, Optional } from "sequelize";
 import sequelize from "../config/database";
+import { uuidDeModelo } from '../utils/cliente.validation';
+import { CANTIDAD_MAXIMA, TIPOS_MOVIMIENTO, TipoMovimiento } from "../utils/stock.validation";
 
-export type TipoMovimientoStock = 'entrada' | 'salida';
+export type TipoMovimientoStock = TipoMovimiento;
 
 interface MovimientoStockAttributes {
     id: string;
@@ -37,19 +39,23 @@ MovimientoStock.init(
             defaultValue: DataTypes.UUIDV4,
             primaryKey: true,
         },
-        productoId: { type: DataTypes.UUID, allowNull: false },
-        usuarioId: { type: DataTypes.UUID, allowNull: false },
+        productoId: { type: DataTypes.UUID, allowNull: false, validate: { uuidValido: uuidDeModelo } },
+        usuarioId: { type: DataTypes.UUID, allowNull: false, validate: { uuidValido: uuidDeModelo } },
         tipo: {
-            type: DataTypes.ENUM('entrada', 'salida'),
+            type: DataTypes.ENUM(...TIPOS_MOVIMIENTO),
             allowNull: false,
+            validate: { isIn: [[...TIPOS_MOVIMIENTO]] },
         },
         cantidad: {
             type: DataTypes.INTEGER,
             allowNull: false,
+            // Protege tambien a los otros modulos que crean movimientos (historial de entregas).
+            validate: { isInt: true, min: 1, max: CANTIDAD_MAXIMA },
         },
         motivo: {
             type: DataTypes.STRING(255),
             allowNull: true,
+            validate: { len: [1, 255] },
         },
         fecha: {
             type: DataTypes.DATE,

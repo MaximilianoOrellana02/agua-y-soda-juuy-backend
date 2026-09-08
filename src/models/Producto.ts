@@ -1,5 +1,6 @@
 import { DataTypes, Model, Optional } from 'sequelize';
 import sequelize from '../config/database';
+import { STOCK_MINIMO_MAXIMO, nombreProducto } from '../utils/producto.validation';
 
 interface ProductoAttributes {
     id: string;
@@ -37,6 +38,9 @@ Producto.init(
             type: DataTypes.STRING(100),
             allowNull: false,
             unique: true,
+            // El setter solo recorta; las reglas viven en validate() para que build() nunca lance.
+            set(value: unknown) { this.setDataValue('nombre', (typeof value === 'string' ? value.trim() : value) as string); },
+            validate: { nombreValido(value: unknown) { nombreProducto(value); } },
         },
         esRetornable: {
             type: DataTypes.BOOLEAN,
@@ -52,11 +56,13 @@ Producto.init(
             type: DataTypes.INTEGER,
             allowNull: false,
             defaultValue: 0,
+            validate: { isInt: true },
         },
         stockMinimo: {
             type: DataTypes.INTEGER,
             allowNull: false,
             defaultValue: 0,
+            validate: { isInt: true, min: 0, max: STOCK_MINIMO_MAXIMO },
         },
     },
     {

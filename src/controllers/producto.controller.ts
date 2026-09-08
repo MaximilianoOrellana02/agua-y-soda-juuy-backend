@@ -1,125 +1,124 @@
 import { Response } from 'express';
+import { Op, Transaction, UniqueConstraintError, col, fn, where } from 'sequelize';
 import { AuthRequest } from '../middlewares/auth.middleware';
+import sequelize from '../config/database';
 import Producto from '../models/Producto';
 import PrecioProducto from '../models/PrecioProducto';
+import { conPrecios } from '../services/producto.service';
+import { ConflictoProducto, validarCambioPrecio, validarFiltrosProductos, validarProducto } from '../utils/producto.validation';
+import { responderErrorProducto } from '../utils/producto.error';
 
-// Crear un producto (con su precio inicial para ambos tipos de cliente)
+// Busqueda de duplicados sin distinguir mayusculas, independiente de la collation de la tabla. Bloquea la fila
+// encontrada. El indice UNIQUE de la base sigue siendo la proteccion final ante escrituras concurrentes.
+function buscarDuplicado(nombre: string, transaction: Transaction, excluirId?: string) {
+    return Producto.findOne({
+        where: {
+            [Op.and]: [
+                where(fn('LOWER', col('nombre')), nombre.toLowerCase()),
+                ...(excluirId ? [{ id: { [Op.ne]: excluirId } }] : []),
+            ],
+        },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+    });
+}
+
+async function asegurarNombreLibre(nombre: string, transaction: Transaction, excluirId?: string) {
+    if (await buscarDuplicado(nombre, transaction, excluirId)) throw new UniqueConstraintError({ message: 'Ese producto ya existe' });
+}
+
+// El lock serializa las operaciones sobre el mismo producto (precio, edicion, baja, movimientos de stock).
+function bloquearProducto(id: string, transaction: Transaction) {
+    return Producto.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+}
+
+// Crear un producto con su precio inicial para ambos tipos de cliente, todo en una transaccion.
+// Si ya existe uno desactivado con el mismo nombre, se reactiva con los datos y precios nuevos (conserva
+// su id y su historial de stock y precios). Un duplicado activo responde 409.
 export async function crearProducto(req: AuthRequest, res: Response) {
     try {
-        const { nombre, esRetornable, precioParticular, precioConfianza } = req.body;
-
-        if (!nombre || precioParticular == null || precioConfianza == null) {
-            return res.status(400).json({
-                error: 'nombre, precioParticular y precioConfianza son obligatorios',
-            });
-        }
-
-        const producto = await Producto.create({
-            nombre,
-            esRetornable: esRetornable ?? true,
+        const { precios, ...datos } = validarProducto(req.body, true);
+        const producto = await sequelize.transaction(async transaction => {
+            const existente = await buscarDuplicado(datos.nombre, transaction);
+            if (existente?.activo) throw new UniqueConstraintError({ message: 'Ese producto ya existe' });
+            const creado = existente
+                ? await existente.update({ ...datos, activo: true }, { transaction })
+                : await Producto.create(datos, { transaction });
+            await PrecioProducto.bulkCreate([
+                { productoId: creado.id, tipoCliente: 'particular', precio: precios.particular },
+                { productoId: creado.id, tipoCliente: 'confianza', precio: precios.confianza },
+            ], { transaction, validate: true });
+            return (await conPrecios([creado], transaction))[0];
         });
-
-        // Creamos los precios iniciales para los 2 tipos de cliente
-        await PrecioProducto.bulkCreate([
-            { productoId: producto.id, tipoCliente: 'particular', precio: precioParticular },
-            { productoId: producto.id, tipoCliente: 'confianza', precio: precioConfianza },
-        ]);
-
         return res.status(201).json(producto);
     } catch (error) {
-        console.error(error);
-        return res.status(500).json({ error: 'Error al crear producto' });
+        return responderErrorProducto(res, error, 'Error al crear producto');
     }
 }
 
-// Listar productos activos, con su precio vigente incluido
+// Listar productos (activos por defecto) con el precio vigente de cada tipo de cliente.
 export async function listarProductos(req: AuthRequest, res: Response) {
     try {
+        const filtros = validarFiltrosProductos(req.query);
         const productos = await Producto.findAll({
-            where: { activo: true },
-            include: [
-                {
-                    model: PrecioProducto,
-                    as: 'precios',
-                    separate: true, // permite ordenar el include de forma independiente
-                    order: [['fechaDesde', 'DESC']],
-                },
-            ],
+            where: filtros.incluirInactivos ? {} : { activo: true },
             order: [['nombre', 'ASC']],
         });
-
-        return res.json(productos);
+        return res.json(await conPrecios(productos));
     } catch (error) {
-        console.error(error);
-        return res.status(500).json({ error: 'Error al listar productos' });
+        return responderErrorProducto(res, error, 'Error al listar productos');
     }
 }
 
-// Cambiar el precio de un producto (INSERT, no UPDATE)
+// Cambiar el precio de un producto (INSERT en el historial de precios, no UPDATE).
 export async function cambiarPrecio(req: AuthRequest, res: Response) {
     try {
-        const { id } = req.params; // id del producto
-        const { tipoCliente, precio } = req.body;
-
-        if (!tipoCliente || precio == null) {
-            return res.status(400).json({ error: 'tipoCliente y precio son obligatorios' });
-        }
-
-        const producto = await Producto.findByPk(id as string);
-        if (!producto) {
-            return res.status(404).json({ error: 'Producto no encontrado' });
-        }
-
-        const nuevoPrecio = await PrecioProducto.create({
-            productoId: id as string,
-            tipoCliente,
-            precio,
+        const datos = validarCambioPrecio(req.body);
+        const precio = await sequelize.transaction(async transaction => {
+            const producto = await bloquearProducto(req.params.id as string, transaction);
+            if (!producto) return null;
+            if (!producto.activo) throw new ConflictoProducto('El producto esta desactivado; reactivarlo antes de cambiar el precio');
+            return PrecioProducto.create({ productoId: producto.id, ...datos }, { transaction });
         });
-
-        return res.status(201).json(nuevoPrecio);
+        if (!precio) return res.status(404).json({ error: 'Producto no encontrado' });
+        return res.status(201).json(precio);
     } catch (error) {
-        console.error(error);
-        return res.status(500).json({ error: 'Error al cambiar precio' });
+        return responderErrorProducto(res, error, 'Error al cambiar precio');
     }
 }
 
-// Desactivar un producto (borrado lógico)
+// Desactivar un producto (baja logica). Se reactiva con PUT /:id y { activo: true } o creando otro con el mismo nombre.
 export async function desactivarProducto(req: AuthRequest, res: Response) {
     try {
-        const { id } = req.params;
-        const producto = await Producto.findByPk(id as string);
-
-        if (!producto) {
-            return res.status(404).json({ error: 'Producto no encontrado' });
-        }
-
-        await producto.update({ activo: false });
-        return res.json(producto);
+        const resultado = await sequelize.transaction(async transaction => {
+            const producto = await bloquearProducto(req.params.id as string, transaction);
+            if (!producto) return 'ausente';
+            if (!producto.activo) return 'inactivo';
+            await producto.update({ activo: false }, { transaction });
+            return 'desactivado';
+        });
+        if (resultado === 'ausente') return res.status(404).json({ error: 'Producto no encontrado' });
+        if (resultado === 'inactivo') return res.status(409).json({ error: 'El producto ya esta desactivado' });
+        return res.status(204).send();
     } catch (error) {
-        console.error(error);
-        return res.status(500).json({ error: 'Error al desactivar producto' });
+        return responderErrorProducto(res, error, 'Error al desactivar producto');
     }
 }
 
+// Editar nombre, retornable, stock minimo o estado activo. Los precios van por PUT /:id/precio.
 export async function actualizarProducto(req: AuthRequest, res: Response) {
     try {
-        const { id } = req.params;
-        const { nombre, esRetornable, stockMinimo } = req.body;
-
-        const producto = await Producto.findByPk(id as string);
-        if (!producto) {
-            return res.status(404).json({ error: 'Producto no encontrado' });
-        }
-
-        await producto.update({
-            nombre: nombre ?? producto.nombre,
-            esRetornable: esRetornable ?? producto.esRetornable,
-            stockMinimo: stockMinimo ?? producto.stockMinimo,
+        const datos = validarProducto(req.body, false);
+        const producto = await sequelize.transaction(async transaction => {
+            const actual = await bloquearProducto(req.params.id as string, transaction);
+            if (!actual) return null;
+            if (datos.nombre !== undefined) await asegurarNombreLibre(datos.nombre, transaction, actual.id);
+            await actual.update(datos, { transaction });
+            return (await conPrecios([actual], transaction))[0];
         });
-
+        if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
         return res.json(producto);
     } catch (error) {
-        console.error(error);
-        return res.status(500).json({ error: 'Error al actualizar producto' });
+        return responderErrorProducto(res, error, 'Error al actualizar producto');
     }
 }

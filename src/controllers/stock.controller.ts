@@ -1,85 +1,93 @@
 import { Response } from "express";
+import { Op, WhereOptions } from "sequelize";
 import { AuthRequest } from "../middlewares/auth.middleware";
 import sequelize from "../config/database";
 import Producto from "../models/Producto";
 import MovimientoStock from "../models/MovimientoStock";
 import Usuario from "../models/Usuario";
-import { Op } from "sequelize";
+import {
+  ConflictoStock,
+  LIMITE_MOVIMIENTOS,
+  validarFiltrosMovimientos,
+  validarMovimiento,
+} from "../utils/stock.validation";
+import { responderErrorStock } from "../utils/stock.error";
 
 export async function crearMovimientoStock(req: AuthRequest, res: Response) {
-    const t = await sequelize.transaction();
-
-    try {
-        const { productoId, tipo, cantidad, motivo } = req.body;
-
-        if (!productoId || !tipo || !cantidad || cantidad <= 0) {
-            await t.rollback();
-            return res.status(400).json({ error: 'Datos incompletos o inválidos' });
-        }
-
-        if (tipo === 'salida' && !motivo) {
-            await t.rollback();
-            return res.status(400).json({ error: 'El motivo es obligatorio para una salida' });
-        }
-
-        const producto = await Producto.findByPk(productoId, { transaction: t });
-        if (!producto) {
-            await t.rollback();
-            return res.status(404).json({ error: 'Producto no encontrado' });
-        }
-
-        const movimiento = await MovimientoStock.create(
-            {
-                productoId,
-                usuarioId: req.usuario!.id,
-                tipo,
-                cantidad,
-                motivo: motivo ?? null,
-            },
-            { transaction: t }
+  try {
+    // Se valida antes de abrir la transaccion para no gastar conexiones en requests invalidos.
+    const datos = validarMovimiento(req.body);
+    const resultado = await sequelize.transaction(async (transaction) => {
+      // El lock serializa los movimientos del mismo producto: el chequeo de stock y el ajuste son consistentes.
+      const producto = await Producto.findByPk(datos.productoId, {
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (!producto) return null;
+      if (!producto.activo)
+        throw new ConflictoStock(
+          "El producto esta desactivado y no admite movimientos",
         );
-
-        if (tipo === 'entrada') {
-            await producto.increment('stockActual', { by: cantidad, transaction: t });
-        } else {
-            await producto.decrement('stockActual', { by: cantidad, transaction: t });
-        }
-
-        await t.commit();
-        return res.status(201).json(movimiento);
-    } catch (error) {
-        await t.rollback();
-        console.error(error);
-        return res.status(500).json({ error: 'Error al registrar el movimiento' });
-    }
+      if (datos.tipo === "salida" && producto.stockActual < datos.cantidad) {
+        throw new ConflictoStock(
+          `Stock insuficiente: hay ${producto.stockActual} y se intentan retirar ${datos.cantidad}`,
+        );
+      }
+      const movimiento = await MovimientoStock.create(
+        { ...datos, usuarioId: req.usuario!.id },
+        { transaction },
+      );
+      await producto.increment("stockActual", {
+        by: datos.tipo === "entrada" ? datos.cantidad : -datos.cantidad,
+        transaction,
+      });
+      await producto.reload({ transaction });
+      return {
+        ...movimiento.get({ plain: true }),
+        stockActual: producto.stockActual,
+      };
+    });
+    if (!resultado)
+      return res.status(404).json({ error: "Producto no encontrado" });
+    return res.status(201).json(resultado);
+  } catch (error) {
+    return responderErrorStock(res, error, "Error al registrar el movimiento");
+  }
 }
 
 export async function listarMovimientosStock(req: AuthRequest, res: Response) {
-    try {
-        const { productoId, tipo, desde, hasta } = req.query as Record<string, string>;
-
-        const where: any = {};
-        if (productoId) where.productoId = productoId;
-        if (tipo) where.tipo = tipo;
-        if (desde || hasta) {
-            where.fecha = {};
-            if (desde) where.fecha[Op.gte] = new Date(desde);
-            if (hasta) where.fecha[Op.lte] = new Date(hasta);
-        }
-
-        const movimientos = await MovimientoStock.findAll({
-            where,
-            include: [
-                { model: Producto, as: 'producto', attributes: ['id', 'nombre'] },
-                { model: Usuario, as: 'usuario', attributes: ['id', 'nombreCompleto'] },
-            ],
-            order: [['fecha', 'DESC']],
-            limit: 1000,
-        });
-
-        return res.json(movimientos);
-    } catch (error) {
-        console.error(error);
-        return res.status(500).json({ error: 'Error al listar movimientos' });
+  try {
+    const filtros = validarFiltrosMovimientos(req.query);
+    const where: WhereOptions = {};
+    if (filtros.productoId)
+      Object.assign(where, { productoId: filtros.productoId });
+    if (filtros.tipo) Object.assign(where, { tipo: filtros.tipo });
+    if (filtros.desde || filtros.hasta) {
+      Object.assign(where, {
+        fecha: {
+          ...(filtros.desde ? { [Op.gte]: filtros.desde } : {}),
+          ...(filtros.hasta ? { [Op.lte]: filtros.hasta } : {}),
+        },
+      });
     }
+
+    const movimientos = await MovimientoStock.findAll({
+      where,
+      include: [
+        { model: Producto, as: "producto", attributes: ["id", "nombre"] },
+        { model: Usuario, as: "usuario", attributes: ["id", "nombreCompleto"] },
+      ],
+      order: [
+        ["fecha", "DESC"],
+        ["createdAt", "DESC"],
+      ],
+      limit: LIMITE_MOVIMIENTOS,
+    });
+
+    // El cliente puede saber si la lista fue recortada y acotar el rango de fechas.
+    res.setHeader("X-Limite-Movimientos", String(LIMITE_MOVIMIENTOS));
+    return res.json(movimientos);
+  } catch (error) {
+    return responderErrorStock(res, error, "Error al listar movimientos");
+  }
 }

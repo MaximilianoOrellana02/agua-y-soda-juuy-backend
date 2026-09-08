@@ -1,323 +1,222 @@
 import { Response } from 'express';
-import { col, fn, Op } from 'sequelize';
+import { col, fn, Op, Transaction, WhereOptions } from 'sequelize';
 import sequelize from '../config/database';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import Cliente from '../models/Cliente';
 import Producto from '../models/Producto';
-import PrecioProducto from '../models/PrecioProducto';
 import SaldoEnvase from '../models/SaldoEnvase';
 import Historial from '../models/Historial';
 import HistorialDetalle from '../models/HistorialDetalle';
 import Usuario from '../models/Usuario';
 import MovimientoStock from '../models/MovimientoStock';
-import { fechaComercial } from '../utils/fecha-comercial';
+import { fechaComercial, rangoDiaComercial } from '../utils/fecha-comercial';
+import { precioVigente } from '../services/producto.service';
+import {
+    ConflictoHistorial, DatosHistorialInvalidos, LIMITE_PAGINA_CLIENTE, RangoFechas, RecursoHistorialAusente,
+    redondear, validarEntrega, validarFiltrosHistorial, validarRangoFechas,
+} from '../utils/historial.validation';
+import { responderErrorHistorial } from '../utils/historial.error';
 
-interface DetalleInput {
-    productoId: string;
-    cantidadEntregada: number;
-    cantidadEnvaseDevuelto?: number;
-    precioUnitario?: number; // opcional: si no viene, se busca el precio vigente
+function whereFecha(rango: RangoFechas): WhereOptions {
+    if (!rango.desde && !rango.hasta) return {};
+    return { fecha: { ...(rango.desde ? { [Op.gte]: rango.desde } : {}), ...(rango.hasta ? { [Op.lte]: rango.hasta } : {}) } };
+}
+
+// Bloquea los productos en orden de id: dos entregas concurrentes con los mismos productos
+// los toman siempre en la misma secuencia y no se traban entre si.
+async function bloquearProductos(ids: string[], transaction: Transaction): Promise<Map<string, Producto>> {
+    const productos = new Map<string, Producto>();
+    for (const id of [...ids].sort()) {
+        const producto = await Producto.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+        if (!producto) throw new RecursoHistorialAusente(`Producto ${id} no encontrado`);
+        if (!producto.activo) throw new ConflictoHistorial(`El producto ${producto.nombre} esta desactivado`);
+        productos.set(id, producto);
+    }
+    return productos;
 }
 
 export async function crearEntrega(req: AuthRequest, res: Response) {
-    const t = await sequelize.transaction(); // arrancamos la transacción
-
     try {
-        const { clienteId, montoPagado, observacion, detalles, metodoPago } = req.body as {
-            clienteId: string;
-            montoPagado?: number;
-            observacion?: string;
-            detalles: DetalleInput[];
-            metodoPago?: 'efectivo' | 'transferencia'
-        };
+        // Se valida antes de abrir la transaccion para no gastar conexiones en requests invalidos.
+        const datos = validarEntrega(req.body);
+        const resultado = await sequelize.transaction(async transaction => {
+            // El lock del cliente coordina con su baja logica y serializa las entregas del mismo cliente.
+            const cliente = await Cliente.findByPk(datos.clienteId, { transaction, lock: transaction.LOCK.UPDATE });
+            if (!cliente) return null;
+            const productos = await bloquearProductos(datos.detalles.map(d => d.productoId), transaction);
 
-        const hayDetalles = detalles && detalles.length > 0;
-        const hayPago = montoPagado != null && montoPagado > 0;
-
-        if (!clienteId || (!hayDetalles && !hayPago)) {
-            await t.rollback();
-            return res.status(400).json({ error: 'Tenés que cargar al menos un producto o un monto pagado' });
-        }
-
-        // 1. Buscar el cliente (bloqueado para esta transacción, evita condiciones de carrera)
-        const cliente = await Cliente.findByPk(clienteId, { transaction: t, lock: true });
-        if (!cliente) {
-            await t.rollback();
-            return res.status(404).json({ error: 'Cliente no encontrado' });
-        }
-
-        let importeTotal = 0;
-        const detallesParaCrear: any[] = [];
-
-        // 2. Recorremos cada línea del detalle
-        for (const linea of detalles ?? []) {
-            const producto = await Producto.findByPk(linea.productoId, { transaction: t });
-            if (!producto) {
-                await t.rollback();
-                return res.status(404).json({ error: `Producto ${linea.productoId} no encontrado` });
-            }
-
-            const cantidadEnvaseDevuelto = linea.cantidadEnvaseDevuelto ?? 0;
-
-
-
-            let precioUnitario = linea.precioUnitario;
-
-            // Si no vino precio manual, buscamos el vigente según tipo de cliente
-            if (precioUnitario == null) {
-                const precioVigente = await PrecioProducto.findOne({
-                    where: { productoId: linea.productoId, tipoCliente: cliente.tipoCliente },
-                    order: [['fechaDesde', 'DESC']],
-                    transaction: t,
-                });
-
-                if (!precioVigente) {
-                    await t.rollback();
-                    return res.status(400).json({
-                        error: `No hay precio cargado para el producto ${producto.nombre}`,
-                    });
+            const lineas = [];
+            for (const detalle of datos.detalles) {
+                const producto = productos.get(detalle.productoId)!;
+                if (detalle.cantidadEnvaseDevuelto && !producto.esRetornable) {
+                    throw new DatosHistorialInvalidos(`El producto ${producto.nombre} no es retornable y no admite envases devueltos`);
                 }
-                precioUnitario = Number(precioVigente.precio);
+                if (detalle.cantidadEntregada > producto.stockActual) {
+                    throw new ConflictoHistorial(`Stock insuficiente de ${producto.nombre}: hay ${producto.stockActual} y se intentan entregar ${detalle.cantidadEntregada}`);
+                }
+                let precioUnitario = detalle.precioUnitario;
+                if (precioUnitario === undefined) {
+                    // Mismo criterio de vigencia que el modulo de productos (ultimo precio cargado).
+                    const vigente = await precioVigente(producto.id, cliente.tipoCliente, transaction);
+                    if (!vigente) throw new DatosHistorialInvalidos(`No hay precio cargado para el producto ${producto.nombre}`);
+                    precioUnitario = vigente.precio;
+                }
+                lineas.push({ ...detalle, producto, precioUnitario, importe: redondear(detalle.cantidadEntregada * precioUnitario) });
             }
 
-            const importe = linea.cantidadEntregada * precioUnitario;
-            importeTotal += importe;
-
-            detallesParaCrear.push({
-                productoId: linea.productoId,
-                cantidadEntregada: linea.cantidadEntregada,
-                cantidadEnvaseDevuelto,
-                precioUnitario,
-                importe,
-            });
-        }
-
-        // 3. Calcular saldos
-        const saldoAnterior = Number(cliente.saldoActual);
-        const montoPagadoFinal = montoPagado ?? 0;
-        const saldoFinal = saldoAnterior + importeTotal - montoPagadoFinal;
-
-        // 4. Crear la cabecera del historial
-        const historial = await Historial.create(
-            {
-                clienteId,
+            const importeTotal = redondear(lineas.reduce((total, linea) => total + linea.importe, 0));
+            const saldoAnterior = Number(cliente.saldoActual);
+            const saldoFinal = redondear(saldoAnterior + importeTotal - datos.montoPagado);
+            const historial = await Historial.create({
+                clienteId: cliente.id,
                 usuarioId: req.usuario!.id,
                 saldoAnterior,
                 importeTotal,
-                montoPagado: montoPagadoFinal,
+                montoPagado: datos.montoPagado,
                 saldoFinal,
-                observacion: observacion ?? null,
-                metodoPago: metodoPago ?? 'efectivo',
-            },
-            { transaction: t }
-        );
+                observacion: datos.observacion,
+                metodoPago: datos.metodoPago,
+            }, { transaction });
 
-        // 5. Crear las líneas de detalle, ligadas al historial recién creado
-        for (const d of detallesParaCrear) {
-            await HistorialDetalle.create(
-                { ...d, historialId: historial.id },
-                { transaction: t }
-            );
+            const detalles = [];
+            for (const linea of lineas) {
+                const { producto, cantidadEntregada, cantidadEnvaseDevuelto, precioUnitario, importe } = linea;
+                detalles.push(await HistorialDetalle.create({
+                    historialId: historial.id, productoId: producto.id, cantidadEntregada, cantidadEnvaseDevuelto, precioUnitario, importe,
+                }, { transaction }));
+                // Solo los productos retornables generan deuda de envases.
+                if (producto.esRetornable) {
+                    const [saldoEnvase] = await SaldoEnvase.findOrCreate({
+                        where: { clienteId: cliente.id, productoId: producto.id },
+                        defaults: { clienteId: cliente.id, productoId: producto.id, cantidad: 0 },
+                        transaction,
+                    });
+                    await saldoEnvase.update({ cantidad: saldoEnvase.cantidad + cantidadEntregada - cantidadEnvaseDevuelto }, { transaction });
+                }
+                // Si la linea solo devuelve envases no hay salida de stock que registrar.
+                if (cantidadEntregada > 0) {
+                    await MovimientoStock.create({
+                        productoId: producto.id, usuarioId: req.usuario!.id, tipo: 'salida', cantidad: cantidadEntregada, motivo: 'Entrega a cliente',
+                    }, { transaction });
+                    await producto.increment('stockActual', { by: -cantidadEntregada, transaction });
+                }
+            }
 
-            // 6. Actualizar (o crear) el saldo de envases de ese producto para el cliente
-            const [saldoEnvase, creado] = await SaldoEnvase.findOrCreate({
-                where: { clienteId, productoId: d.productoId },
-                defaults: { clienteId, productoId: d.productoId, cantidad: 0 },
-                transaction: t,
-            });
-
-            const diferencia = d.cantidadEntregada - d.cantidadEnvaseDevuelto;
-            await saldoEnvase.update(
-                { cantidad: saldoEnvase.cantidad + diferencia },
-                { transaction: t }
-            );
-
-            // 6.5. Descontar del stock del depósito y dejar registro del movimiento
-            await MovimientoStock.create(
-                {
-                    productoId: d.productoId,
-                    usuarioId: req.usuario!.id,
-                    tipo: 'salida',
-                    cantidad: d.cantidadEntregada,
-                    motivo: 'Entrega a cliente',
-                },
-                { transaction: t }
-            );
-            await Producto.decrement('stockActual', {
-                by: d.cantidadEntregada,
-                where: { id: d.productoId },
-                transaction: t,
-            });
-        }
-
-        // 7. Actualizar el saldo del cliente y marcarlo como visitado hoy
-        const hoy = fechaComercial();
-        await cliente.update({ saldoActual: saldoFinal, ultimaVisitaFecha: hoy }, { transaction: t });
-        await t.commit();
-
-        return res.status(201).json({ historial, detalles: detallesParaCrear });
+            await cliente.update({ saldoActual: saldoFinal, ultimaVisitaFecha: fechaComercial() }, { transaction });
+            return { historial, detalles };
+        });
+        if (!resultado) return res.status(404).json({ error: 'Cliente no encontrado' });
+        return res.status(201).json(resultado);
     } catch (error) {
-        await t.rollback(); // si algo falla, deshacemos TODO lo que se hizo en esta transacción
-        console.error(error);
-        return res.status(500).json({ error: 'Error al registrar la entrega' });
+        return responderErrorHistorial(res, error, 'Error al registrar la entrega');
     }
 }
 
-// Ver el historial de un cliente puntual
+// Historial de un cliente (tambien de los dados de baja), del mas reciente al mas antiguo.
+// Acepta desde, hasta, page y limit (hasta 500, 100 por defecto); el total va en X-Total-Historial.
 export async function historialPorCliente(req: AuthRequest, res: Response) {
     try {
-        const { clienteId } = req.params;
-
-        const historiales = await Historial.findAll({
-            where: { clienteId },
-            include: [
-                {
-                    model: HistorialDetalle,
-                    as: 'detalles',
-                    include: [{ model: Producto, as: 'producto', attributes: ['id', 'nombre'] }],
-                },
-            ],
-            order: [['fecha', 'DESC']],
+        const clienteId = req.params.clienteId as string;
+        const filtros = validarFiltrosHistorial(req.query, LIMITE_PAGINA_CLIENTE, 100);
+        if (!(await Cliente.findByPk(clienteId, { paranoid: false }))) return res.status(404).json({ error: 'Cliente no encontrado' });
+        const { rows, count } = await Historial.findAndCountAll({
+            where: { clienteId, ...whereFecha(filtros) },
+            include: [{
+                model: HistorialDetalle,
+                as: 'detalles',
+                include: [{ model: Producto, as: 'producto', attributes: ['id', 'nombre'] }],
+            }],
+            order: [['fecha', 'DESC'], ['createdAt', 'DESC']],
+            limit: filtros.limit,
+            offset: (filtros.page - 1) * filtros.limit,
+            distinct: true,
         });
-
-        return res.json(historiales);
+        res.setHeader('X-Total-Historial', String(count));
+        return res.json(rows);
     } catch (error) {
-        console.error(error);
-        return res.status(500).json({ error: 'Error al obtener historial' });
+        return responderErrorHistorial(res, error, 'Error al obtener historial');
     }
 }
 
 export async function listarHistorial(req: AuthRequest, res: Response) {
     try {
-        const { desde, hasta, page = '1', limit = '20' } = req.query as Record<string, string>;
-
-        const where: any = {};
-        if (desde || hasta) {
-            where.fecha = {};
-            if (desde) where.fecha[Op.gte] = new Date(desde);
-            if (hasta) where.fecha[Op.lte] = new Date(hasta);
-        }
-
-        const pageNum = Math.max(1, parseInt(page));
-        const limitNum = Math.max(1, parseInt(limit));
-        const offset = (pageNum - 1) * limitNum;
-
+        const filtros = validarFiltrosHistorial(req.query);
         const { rows, count } = await Historial.findAndCountAll({
-            where,
+            where: whereFecha(filtros),
             include: [
                 { model: Cliente, as: 'cliente', attributes: ['id', 'nombre', 'apellido'], paranoid: false },
                 { model: Usuario, as: 'usuario', attributes: ['id', 'nombreCompleto'] },
             ],
-            order: [['fecha', 'DESC']],
-            limit: limitNum,
-            offset,
+            order: [['fecha', 'DESC'], ['createdAt', 'DESC']],
+            limit: filtros.limit,
+            offset: (filtros.page - 1) * filtros.limit,
         });
-
-        return res.json({
-            data: rows,
-            total: count,
-            page: pageNum,
-            totalPages: Math.ceil(count / limitNum),
-        });
+        return res.json({ data: rows, total: count, page: filtros.page, totalPages: Math.ceil(count / filtros.limit) });
     } catch (error) {
-        console.error(error);
-        return res.status(500).json({ error: 'Error al listar historial' });
+        return responderErrorHistorial(res, error, 'Error al listar historial');
     }
 }
 
+interface Totales { cantidadEntregas: number; totalImporte: number; totalPagado: number; }
+
+async function resumir(rango: RangoFechas) {
+    const where = whereFecha(rango);
+    const totales = await Historial.findOne({
+        where,
+        attributes: [
+            [fn('COUNT', col('id')), 'cantidadEntregas'],
+            [fn('SUM', col('importeTotal')), 'totalImporte'],
+            [fn('SUM', col('montoPagado')), 'totalPagado'],
+        ],
+        raw: true,
+    }) as unknown as Totales | null;
+    const cantidades = await HistorialDetalle.findAll({
+        include: [
+            { model: Historial, as: 'historial', attributes: [], where },
+            { model: Producto, as: 'producto', attributes: ['nombre'] },
+        ],
+        attributes: [
+            [fn('SUM', col('cantidadEntregada')), 'entregados'],
+            [fn('SUM', col('cantidadEnvaseDevuelto')), 'devueltos'],
+        ],
+        group: ['producto.id', 'producto.nombre'],
+        order: [[col('producto.nombre'), 'ASC']],
+        raw: true,
+    }) as unknown as Array<{ 'producto.nombre': string; entregados: string; devueltos: string }>;
+    const totalImporte = redondear(Number(totales?.totalImporte ?? 0));
+    const totalPagado = redondear(Number(totales?.totalPagado ?? 0));
+    return {
+        cantidadEntregas: Number(totales?.cantidadEntregas ?? 0),
+        totalImporte,
+        totalPagado,
+        totalPendiente: redondear(totalImporte - totalPagado),
+        productos: cantidades.map(c => ({ nombre: c['producto.nombre'], cantidad: Number(c.entregados), devueltos: Number(c.devueltos) })),
+    };
+}
+
+// Totales del periodo: totalPendiente es lo facturado menos lo cobrado en el periodo, no la deuda acumulada.
 export async function resumenHistorial(req: AuthRequest, res: Response) {
     try {
-        const { desde, hasta } = req.query as Record<string, string>;
-
-        const where: any = {};
-        if (desde || hasta) {
-            where.fecha = {};
-            if (desde) where.fecha[Op.gte] = new Date(desde);
-            if (hasta) where.fecha[Op.lte] = new Date(hasta);
-        }
-
-        // Totales generales (cantidad de entregas, facturado, cobrado)
-        const totales = await Historial.findOne({
-            where,
-            attributes: [
-                [fn('COUNT', col('id')), 'cantidadEntregas'],
-                [fn('SUM', col('importeTotal')), 'totalImporte'],
-                [fn('SUM', col('montoPagado')), 'totalPagado'],
-            ],
-            raw: true,
-        });
-
-        // Desglose de cantidades entregadas, agrupado por producto
-        const detalles = await HistorialDetalle.findAll({
-            include: [
-                { model: Historial, as: 'historial', attributes: [], where },
-                { model: Producto, as: 'producto', attributes: ['nombre'] },
-            ],
-            attributes: [[fn('SUM', col('cantidadEntregada')), 'cantidad']],
-            group: ['producto.id', 'producto.nombre'],
-            raw: true,
-        });
-
-        const totalImporte = Number((totales as any)?.totalImporte ?? 0);
-        const totalPagado = Number((totales as any)?.totalPagado ?? 0);
-
-        return res.json({
-            cantidadEntregas: Number((totales as any)?.cantidadEntregas ?? 0),
-            totalImporte,
-            totalPagado,
-            totalPendiente: totalImporte - totalPagado,
-            productos: detalles.map((d: any) => ({
-                nombre: d['producto.nombre'],
-                cantidad: Number(d.cantidad),
-            })),
-        });
+        return res.json(await resumir(validarRangoFechas(req.query)));
     } catch (error) {
-        console.error(error);
-        return res.status(500).json({ error: 'Error al obtener el resumen' });
+        return responderErrorHistorial(res, error, 'Error al obtener el resumen');
     }
 }
 
+// Resumen del dia comercial de Argentina, el mismo criterio que las visitas, sin depender del reloj del servidor.
 export async function resumenHoy(req: AuthRequest, res: Response) {
     try {
-        const inicio = new Date();
-        inicio.setHours(0, 0, 0, 0);
-        const fin = new Date();
-        fin.setHours(23, 59, 59, 999);
-
-        const totales = await Historial.findOne({
-            where: { fecha: { [Op.between]: [inicio, fin] } },
-            attributes: [
-                [fn('SUM', col('montoPagado')), 'cobrado'],
-                [fn('COUNT', col('id')), 'entregasCount'],
-            ],
-            raw: true,
-        });
-
-        const cantidades = await HistorialDetalle.findAll({
-            include: [
-                {
-                    model: Historial,
-                    as: 'historial',
-                    attributes: [],
-                    where: { fecha: { [Op.between]: [inicio, fin] } },
-                },
-            ],
-            attributes: [
-                [fn('SUM', col('cantidadEntregada')), 'entregados'],
-                [fn('SUM', col('cantidadEnvaseDevuelto')), 'devueltos'],
-            ],
-            raw: true,
-        });
-
+        const { inicio, fin } = rangoDiaComercial(fechaComercial());
+        const resumen = await resumir({ desde: inicio, hasta: fin });
         return res.json({
-            cobrado: Number((totales as any)?.cobrado ?? 0),
-            entregasCount: Number((totales as any)?.entregasCount ?? 0),
-            entregados: Number((cantidades[0] as any)?.entregados ?? 0),
-            devueltos: Number((cantidades[0] as any)?.devueltos ?? 0),
+            fecha: fechaComercial(),
+            cobrado: resumen.totalPagado,
+            entregasCount: resumen.cantidadEntregas,
+            entregados: resumen.productos.reduce((total, p) => total + p.cantidad, 0),
+            devueltos: resumen.productos.reduce((total, p) => total + p.devueltos, 0),
+            productos: resumen.productos,
         });
     } catch (error) {
-        console.error(error);
-        return res.status(500).json({ error: 'Error al obtener el resumen del día' });
-
+        return responderErrorHistorial(res, error, 'Error al obtener el resumen del dia');
     }
 }
