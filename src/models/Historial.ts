@@ -1,7 +1,7 @@
 import { DataTypes, Model, Optional } from 'sequelize';
 import sequelize from '../config/database';
 import { uuidDeModelo } from '../utils/cliente.validation';
-import { IMPORTE_MAXIMO, METODOS_PAGO, MetodoPago as Metodo, OBSERVACION_MAXIMA } from '../utils/historial.validation';
+import { AjusteSaldoInput, IMPORTE_MAXIMO, METODOS_PAGO, MetodoPago as Metodo, OBSERVACION_MAXIMA } from '../utils/historial.validation';
 
 export type MetodoPago = Metodo;
 
@@ -16,11 +16,12 @@ interface HistorialAttributes {
     saldoFinal: number;
     observacion: string | null;
     metodoPago: MetodoPago;
+    ajusteSaldo: AjusteSaldoInput | null;
 
 }
 
 interface HistorialCreationAttributes
-    extends Optional<HistorialAttributes, 'id' | 'fecha' | 'observacion' | 'metodoPago'> { }
+    extends Optional<HistorialAttributes, 'id' | 'fecha' | 'observacion' | 'metodoPago' | 'ajusteSaldo'> { }
 
 // MySQL devuelve DECIMAL como texto; la API siempre expone los importes como numero.
 function decimal(campo: keyof HistorialAttributes, extra: object = {}) {
@@ -44,6 +45,7 @@ class Historial extends Model<HistorialAttributes, HistorialCreationAttributes>
     public saldoFinal!: number;
     public observacion!: string | null;
     public metodoPago!: MetodoPago;
+    public ajusteSaldo!: AjusteSaldoInput | null;
 
 
     public readonly createdAt!: Date;
@@ -78,6 +80,7 @@ Historial.init(
             },
             validate: { len: [1, OBSERVACION_MAXIMA] },
         },
+        ajusteSaldo: { type: DataTypes.JSON, allowNull: true, defaultValue: null },
         metodoPago: {
             type: DataTypes.ENUM(...METODOS_PAGO),
             allowNull: false,

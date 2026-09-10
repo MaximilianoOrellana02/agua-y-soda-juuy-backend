@@ -224,3 +224,76 @@ test('migration is idempotent, reversible, trims observations, adds indexes and 
     await db.query('DELETE FROM historial_detalles WHERE historialId = :h', { replacements: { h: sinFecha } });
     await migration.up(qi);
 });
+
+test('prior debt is audited with the delivery and does not inflate sales or payments', async () => {
+    const beforeSummary = (await request('/historial/resumen')).body;
+    const ajusteSaldo = { saldoEsperado: 0, saldoNuevo: 15000, motivo: 'Deuda anterior al sistema' };
+    const result = await request('/historial', 'POST', entrega({ montoPagado: 50, ajusteSaldo }));
+    assert.equal(result.status, 201, JSON.stringify(result.body));
+    assert.equal(result.body.historial.saldoAnterior, 15000);
+    assert.equal(result.body.historial.saldoFinal, 15150);
+    assert.deepEqual(result.body.historial.ajusteSaldo, ajusteSaldo);
+    assert.equal(result.body.historial.usuarioId, user.id);
+    assert.ok(result.body.historial.fecha);
+    assert.equal((await estado()).saldo, 15150);
+    const history = (await request('/historial/cliente/' + cliente.id)).body;
+    assert.deepEqual(history[0].ajusteSaldo, ajusteSaldo);
+    const afterSummary = (await request('/historial/resumen')).body;
+    assert.equal(afterSummary.cantidadEntregas - beforeSummary.cantidadEntregas, 1);
+    assert.equal(afterSummary.totalImporte - beforeSummary.totalImporte, 200);
+    assert.equal(afterSummary.totalPagado - beforeSummary.totalPagado, 50);
+    assert.equal(afterSummary.totalPendiente - beforeSummary.totalPendiente, 150);
+});
+
+test('a stale balance adjustment cannot overwrite a more recent payment', async () => {
+    await cliente.update({ saldoActual: 500 });
+    assert.equal((await request('/historial', 'POST', { clienteId: cliente.id, montoPagado: 100 })).status, 201);
+    const before = await estado();
+    const result = await request('/historial', 'POST', entrega({ ajusteSaldo: { saldoEsperado: 500, saldoNuevo: 15000, motivo: 'Deuda previa' } }));
+    assert.equal(result.status, 409);
+    assert.match(result.body.error, /saldo del cliente cambio/);
+    assert.deepEqual(await estado(), before);
+});
+
+test('concurrent balance adjustments serialize and only one matching expected balance succeeds', async () => {
+    const ajusteSaldo = { saldoEsperado: 0, saldoNuevo: 15000, motivo: 'Deuda previa' };
+    const results = await Promise.all([
+        request('/historial', 'POST', entrega({ ajusteSaldo })),
+        request('/historial', 'POST', entrega({ ajusteSaldo })),
+    ]);
+    assert.deepEqual(results.map(r => r.status).sort(), [201, 409]);
+    const saved = await estado();
+    assert.equal(saved.saldo, 15200); assert.equal(saved.historiales, 1); assert.equal(saved.stock, 8);
+});
+
+test('a failed delivery rolls back the adjustment audit, balance, stock and containers', async t => {
+    const before = await estado();
+    t.mock.method(console, 'error', () => {});
+    t.mock.method(MovimientoStock, 'create', async () => { throw new Error('simulated stock write failure'); });
+    const result = await request('/historial', 'POST', entrega({ ajusteSaldo: { saldoEsperado: 0, saldoNuevo: 15000, motivo: 'Deuda previa' } }));
+    assert.equal(result.status, 500);
+    assert.deepEqual(await estado(), before);
+});
+
+test('invalid adjustments and overflowing final balances leave the delivery unchanged', async () => {
+    const before = await estado();
+    for (const ajusteSaldo of [null, { saldoEsperado: 0, saldoNuevo: -10, motivo: 'Deuda' },
+        { saldoEsperado: 0, saldoNuevo: 100, motivo: '' }, { saldoEsperado: 0, saldoNuevo: 99999999.99, motivo: 'Deuda' }]) {
+        assert.equal((await request('/historial', 'POST', entrega({ ajusteSaldo }))).status, 400);
+    }
+    assert.deepEqual(await estado(), before);
+});
+
+test('adjustment migration preserves previous deliveries and supports rollback', async () => {
+    const qi = db.getQueryInterface();
+    const ajusteMigration = require('../migrations/20260910000000-add-ajuste-saldo-historial');
+    const result = await request('/historial', 'POST', entrega());
+    assert.equal(result.status, 201);
+    assert.equal(result.body.historial.ajusteSaldo, null);
+    await ajusteMigration.down(qi);
+    await ajusteMigration.up(qi, Sequelize);
+    await ajusteMigration.up(qi, Sequelize);
+    const previous = await Historial.findByPk(result.body.historial.id);
+    assert.equal(previous.ajusteSaldo, null);
+    assert.equal(previous.saldoFinal, 200);
+});

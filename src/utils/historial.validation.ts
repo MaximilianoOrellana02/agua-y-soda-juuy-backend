@@ -22,12 +22,18 @@ export interface DetalleEntregaInput {
     cantidadEnvaseDevuelto: number;
     precioUnitario?: number;
 }
+export interface AjusteSaldoInput {
+    saldoEsperado: number;
+    saldoNuevo: number;
+    motivo: string;
+}
 export interface EntregaInput {
     clienteId: string;
     montoPagado: number;
     metodoPago: MetodoPago;
     observacion: string | null;
     detalles: DetalleEntregaInput[];
+    ajusteSaldo?: AjusteSaldoInput;
 }
 export interface RangoFechas { desde?: Date; hasta?: Date; }
 export interface FiltrosHistorial extends RangoFechas { page: number; limit: number; }
@@ -95,6 +101,19 @@ function detalleEntrega(value: unknown, posicion: number): DetalleEntregaInput {
     return detalle;
 }
 
+function validarAjusteSaldo(value: unknown): AjusteSaldoInput {
+    const ajuste = cuerpo(value, 'ajusteSaldo');
+    const esperado = ajuste.saldoEsperado;
+    if (typeof esperado !== 'number' || !Number.isFinite(esperado) || Math.abs(esperado) > IMPORTE_MAXIMO || redondear(esperado) !== esperado) {
+        throw new DatosHistorialInvalidos('saldoEsperado debe ser un saldo valido con hasta 2 decimales');
+    }
+    const saldoNuevo = importeHistorial(ajuste.saldoNuevo, 'saldoNuevo');
+    const motivo = observacionHistorial(ajuste.motivo);
+    if (!motivo) throw new DatosHistorialInvalidos('Indicar el motivo del ajuste de saldo');
+    if (saldoNuevo === esperado) throw new DatosHistorialInvalidos('El nuevo saldo debe ser distinto del saldo actual');
+    return { saldoEsperado: esperado, saldoNuevo, motivo };
+}
+
 export function validarEntrega(value: unknown): EntregaInput {
     const body = cuerpo(value);
     if (!esUuid(body.clienteId)) throw new DatosHistorialInvalidos('clienteId debe ser un UUID');
@@ -108,7 +127,11 @@ export function validarEntrega(value: unknown): EntregaInput {
         throw new DatosHistorialInvalidos('Cada producto puede aparecer una sola vez en detalles');
     }
     if (!detalles.length && montoPagado === 0) throw new DatosHistorialInvalidos('Cargar al menos un producto o un monto pagado');
-    return { clienteId: body.clienteId, montoPagado, metodoPago: metodoPagoHistorial(body.metodoPago), observacion: observacionHistorial(body.observacion), detalles };
+    return {
+        clienteId: body.clienteId, montoPagado, metodoPago: metodoPagoHistorial(body.metodoPago),
+        observacion: observacionHistorial(body.observacion), detalles,
+        ...(body.ajusteSaldo !== undefined ? { ajusteSaldo: validarAjusteSaldo(body.ajusteSaldo) } : {}),
+    };
 }
 
 // Acepta fechas ISO 8601 o un dia (YYYY-MM-DD), que se interpreta como dia comercial completo de Argentina:

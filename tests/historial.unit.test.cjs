@@ -50,6 +50,20 @@ test('detail lines validate ids, integer quantities, optional prices and forbid 
     assert.equal(entrega.montoPagado, 0);
 });
 
+test('balance adjustments require an explicit valid expected balance, new debt and reason', () => {
+    const ajusteSaldo = { saldoEsperado: -25.5, saldoNuevo: 15000, motivo: '  Deuda previa  ' };
+    assert.deepEqual(validarEntrega({ clienteId, montoPagado: 10, ajusteSaldo }).ajusteSaldo,
+        { saldoEsperado: -25.5, saldoNuevo: 15000, motivo: 'Deuda previa' });
+    for (const value of [null, [], {}, { ...ajusteSaldo, saldoEsperado: '0' }, { ...ajusteSaldo, saldoEsperado: NaN },
+        { ...ajusteSaldo, saldoEsperado: IMPORTE_MAXIMO + 1 }, { ...ajusteSaldo, saldoEsperado: 0.001 },
+        { ...ajusteSaldo, saldoNuevo: -1 }, { ...ajusteSaldo, saldoNuevo: '15000' }, { ...ajusteSaldo, saldoNuevo: Infinity },
+        { ...ajusteSaldo, saldoNuevo: 1.005 }, { ...ajusteSaldo, saldoNuevo: IMPORTE_MAXIMO + 1 },
+        { ...ajusteSaldo, saldoEsperado: 15000 }, { ...ajusteSaldo, motivo: '' }, { ...ajusteSaldo, motivo: 'x'.repeat(256) }]) {
+        assert.throws(() => validarEntrega({ clienteId, montoPagado: 10, ajusteSaldo: value }), DatosHistorialInvalidos);
+    }
+    assert.throws(() => validarEntrega({ clienteId, ajusteSaldo }), /al menos un producto/);
+});
+
 test('amounts are rounded to cents', () => {
     assert.equal(redondear(3 * 33.33), 99.99); assert.equal(redondear(0.1 + 0.2), 0.3); assert.equal(redondear(-1.005), -1);
 });
