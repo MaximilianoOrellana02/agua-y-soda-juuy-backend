@@ -29,6 +29,7 @@ export interface AjusteSaldoInput {
 }
 export interface EntregaInput {
     clienteId: string;
+    pedidoId?: string;
     montoPagado: number;
     metodoPago: MetodoPago;
     observacion: string | null;
@@ -117,6 +118,9 @@ function validarAjusteSaldo(value: unknown): AjusteSaldoInput {
 export function validarEntrega(value: unknown): EntregaInput {
     const body = cuerpo(value);
     if (!esUuid(body.clienteId)) throw new DatosHistorialInvalidos('clienteId debe ser un UUID');
+    if (body.pedidoId !== undefined && !esUuid(body.pedidoId)) {
+        throw new DatosHistorialInvalidos('pedidoId debe ser un UUID');
+    }
     const montoPagado = body.montoPagado === undefined || body.montoPagado === null ? 0 : importeHistorial(body.montoPagado, 'montoPagado');
     let detalles: DetalleEntregaInput[] = [];
     if (body.detalles !== undefined && body.detalles !== null) {
@@ -130,6 +134,7 @@ export function validarEntrega(value: unknown): EntregaInput {
     return {
         clienteId: body.clienteId, montoPagado, metodoPago: metodoPagoHistorial(body.metodoPago),
         observacion: observacionHistorial(body.observacion), detalles,
+        ...(body.pedidoId !== undefined ? { pedidoId: body.pedidoId as string } : {}),
         ...(body.ajusteSaldo !== undefined ? { ajusteSaldo: validarAjusteSaldo(body.ajusteSaldo) } : {}),
     };
 }

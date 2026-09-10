@@ -8,8 +8,6 @@ import { conPrecios } from '../services/producto.service';
 import { ConflictoProducto, validarCambioPrecio, validarFiltrosProductos, validarProducto } from '../utils/producto.validation';
 import { responderErrorProducto } from '../utils/producto.error';
 
-// Busqueda de duplicados sin distinguir mayusculas, independiente de la collation de la tabla. Bloquea la fila
-// encontrada. El indice UNIQUE de la base sigue siendo la proteccion final ante escrituras concurrentes.
 function buscarDuplicado(nombre: string, transaction: Transaction, excluirId?: string) {
     return Producto.findOne({
         where: {
@@ -27,14 +25,10 @@ async function asegurarNombreLibre(nombre: string, transaction: Transaction, exc
     if (await buscarDuplicado(nombre, transaction, excluirId)) throw new UniqueConstraintError({ message: 'Ese producto ya existe' });
 }
 
-// El lock serializa las operaciones sobre el mismo producto (precio, edicion, baja, movimientos de stock).
 function bloquearProducto(id: string, transaction: Transaction) {
     return Producto.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
 }
 
-// Crear un producto con su precio inicial para ambos tipos de cliente, todo en una transaccion.
-// Si ya existe uno desactivado con el mismo nombre, se reactiva con los datos y precios nuevos (conserva
-// su id y su historial de stock y precios). Un duplicado activo responde 409.
 export async function crearProducto(req: AuthRequest, res: Response) {
     try {
         const { precios, ...datos } = validarProducto(req.body, true);
@@ -56,7 +50,6 @@ export async function crearProducto(req: AuthRequest, res: Response) {
     }
 }
 
-// Listar productos (activos por defecto) con el precio vigente de cada tipo de cliente.
 export async function listarProductos(req: AuthRequest, res: Response) {
     try {
         const filtros = validarFiltrosProductos(req.query);
@@ -70,7 +63,6 @@ export async function listarProductos(req: AuthRequest, res: Response) {
     }
 }
 
-// Cambiar el precio de un producto (INSERT en el historial de precios, no UPDATE).
 export async function cambiarPrecio(req: AuthRequest, res: Response) {
     try {
         const datos = validarCambioPrecio(req.body);
@@ -87,7 +79,6 @@ export async function cambiarPrecio(req: AuthRequest, res: Response) {
     }
 }
 
-// Desactivar un producto (baja logica). Se reactiva con PUT /:id y { activo: true } o creando otro con el mismo nombre.
 export async function desactivarProducto(req: AuthRequest, res: Response) {
     try {
         const resultado = await sequelize.transaction(async transaction => {
@@ -105,7 +96,6 @@ export async function desactivarProducto(req: AuthRequest, res: Response) {
     }
 }
 
-// Editar nombre, retornable, stock minimo o estado activo. Los precios van por PUT /:id/precio.
 export async function actualizarProducto(req: AuthRequest, res: Response) {
     try {
         const datos = validarProducto(req.body, false);

@@ -15,10 +15,8 @@ import { responderErrorStock } from "../utils/stock.error";
 
 export async function crearMovimientoStock(req: AuthRequest, res: Response) {
   try {
-    // Se valida antes de abrir la transaccion para no gastar conexiones en requests invalidos.
     const datos = validarMovimiento(req.body);
     const resultado = await sequelize.transaction(async (transaction) => {
-      // El lock serializa los movimientos del mismo producto: el chequeo de stock y el ajuste son consistentes.
       const producto = await Producto.findByPk(datos.productoId, {
         transaction,
         lock: transaction.LOCK.UPDATE,
@@ -84,7 +82,6 @@ export async function listarMovimientosStock(req: AuthRequest, res: Response) {
       limit: LIMITE_MOVIMIENTOS,
     });
 
-    // El cliente puede saber si la lista fue recortada y acotar el rango de fechas.
     res.setHeader("X-Limite-Movimientos", String(LIMITE_MOVIMIENTOS));
     return res.json(movimientos);
   } catch (error) {

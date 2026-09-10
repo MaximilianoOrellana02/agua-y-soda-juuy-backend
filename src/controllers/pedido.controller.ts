@@ -11,10 +11,8 @@ const CLIENTE_DEL_PEDIDO = { model: Cliente, as: 'cliente', attributes: ['id', '
 
 export async function crearPedido(req: AuthRequest, res: Response) {
     try {
-        // Se valida antes de abrir la transaccion para no gastar conexiones en requests invalidos.
         const datos = validarPedido(req.body);
         const pedido = await sequelize.transaction(async transaction => {
-            // El lock coordina con la baja logica del cliente: no se crean pedidos pendientes para clientes archivados.
             const cliente = await Cliente.findByPk(datos.clienteId, { transaction, lock: transaction.LOCK.UPDATE });
             if (!cliente) return null;
             return Pedido.create({ ...datos, usuarioId: req.usuario!.id }, { transaction });
@@ -26,8 +24,6 @@ export async function crearPedido(req: AuthRequest, res: Response) {
     }
 }
 
-// Sin filtros lista los pendientes, del mas antiguo al mas nuevo. ?estado=entregado o ?estado=todos amplian el
-// listado (del mas nuevo al mas antiguo) y ?clienteId=<uuid> lo acota a un cliente.
 export async function listarPedidos(req: AuthRequest, res: Response) {
     try {
         const filtros = validarFiltrosPedidos(req.query);
@@ -41,7 +37,6 @@ export async function listarPedidos(req: AuthRequest, res: Response) {
             order: [['fecha', direccion], ['createdAt', direccion]],
             limit: LIMITE_PEDIDOS,
         });
-        // El cliente puede saber si la lista fue recortada y acotar por estado o cliente.
         res.setHeader('X-Limite-Pedidos', String(LIMITE_PEDIDOS));
         return res.json(pedidos);
     } catch (error) {
@@ -49,7 +44,6 @@ export async function listarPedidos(req: AuthRequest, res: Response) {
     }
 }
 
-// Mantiene el nombre historico usado por las rutas.
 export const listarPedidosPendientes = listarPedidos;
 
 export async function marcarEntregado(req: AuthRequest, res: Response) {
@@ -67,7 +61,6 @@ export async function marcarEntregado(req: AuthRequest, res: Response) {
     }
 }
 
-// Solo se eliminan pedidos pendientes: los entregados forman parte del historial del cliente.
 export async function eliminarPedido(req: AuthRequest, res: Response) {
     try {
         const resultado = await sequelize.transaction(async transaction => {

@@ -7,8 +7,6 @@ import sequelize from '../config/database';
 import { validarBarrio } from '../utils/barrio.validation';
 import { responderErrorBarrio } from '../utils/barrio.error';
 
-// Chequeo de duplicados sin distinguir mayusculas, independiente de la collation de la tabla.
-// El indice UNIQUE de la base sigue siendo la proteccion final ante escrituras concurrentes.
 async function asegurarNombreLibre(nombre: string, transaction: Transaction, excluirId?: string) {
     const duplicado = await Barrio.findOne({
         where: {
@@ -64,17 +62,13 @@ export async function eliminarBarrio(req: AuthRequest, res: Response) {
         const resultado = await sequelize.transaction(async transaction => {
             const barrio = await Barrio.findByPk(req.params.id as string, { transaction, lock: transaction.LOCK.UPDATE });
             if (!barrio) return 'ausente';
-            // Los clientes activos bloquean el borrado. Los archivados solo se desvinculan, porque no se
-            // pueden editar ni restaurar y dejarian al barrio imposible de eliminar.
             const activos = await Cliente.count({ where: { barrioId: barrio.id }, transaction });
             if (activos) return 'ocupado';
-            // deletedAt no forma parte de ClienteAttributes, por eso el where se tipa como WhereOptions.
             await Cliente.update({ barrioId: null }, {
                 where: { barrioId: barrio.id, deletedAt: { [Op.ne]: null } } as WhereOptions,
                 paranoid: false,
                 transaction,
             });
-            // La FK RESTRICT (migracion harden-barrios) frena asignaciones concurrentes posteriores al conteo.
             await barrio.destroy({ transaction });
             return 'borrado';
         });

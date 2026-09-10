@@ -13,6 +13,7 @@ after(() => db.close());
 const clienteId = '11111111-1111-4111-8111-111111111111';
 const productoId = '22222222-2222-4222-8222-222222222222';
 const otroProducto = '33333333-3333-4333-8333-333333333333';
+const pedidoId = '44444444-4444-4444-8444-444444444444';
 const linea = (extra = {}) => ({ productoId, cantidadEntregada: 2, ...extra });
 
 test('deliveries require a uuid client and at least a product line or a payment', () => {
@@ -33,6 +34,13 @@ test('payments, methods and observations are validated and normalized', () => {
     assert.equal(entrega.metodoPago, 'mercadopago'); assert.equal(entrega.observacion, 'Pago parcial');
     assert.equal(validarEntrega({ clienteId, montoPagado: 1, observacion: '   ' }).observacion, null);
     assert.equal(validarEntrega({ clienteId, montoPagado: IMPORTE_MAXIMO }).montoPagado, IMPORTE_MAXIMO);
+});
+
+test('an optional order id must be a uuid and is preserved', () => {
+    for (const value of [null, '', 'abc', 1, [], {}]) {
+        assert.throws(() => validarEntrega({ clienteId, pedidoId: value, montoPagado: 10 }), DatosHistorialInvalidos);
+    }
+    assert.equal(validarEntrega({ clienteId, pedidoId, montoPagado: 10 }).pedidoId, pedidoId);
 });
 
 test('detail lines validate ids, integer quantities, optional prices and forbid duplicates', () => {

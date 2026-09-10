@@ -22,6 +22,7 @@ const Producto = require('../dist/models/Producto').default;
 const PrecioProducto = require('../dist/models/PrecioProducto').default;
 const Cliente = require('../dist/models/Cliente').default;
 const Usuario = require('../dist/models/Usuario').default;
+const Pedido = require('../dist/models/Pedido').default;
 const { crearSesion } = require('../dist/services/token.service');
 const { fechaComercial } = require('../dist/utils/fecha-comercial');
 const migration = require('../migrations/20260908060000-harden-historial');
@@ -121,6 +122,19 @@ test('a delivery prices lines by client type, updates balance, stock, containers
     const confianza = await request('/historial', 'POST', entrega({ detalles: [{ productoId: producto.id, cantidadEntregada: 1 }] }));
     assert.equal(confianza.body.detalles[0].precioUnitario, 90); assert.equal(confianza.body.historial.saldoFinal, 260);
 });
+test('a delivery linked to an order marks it delivered and cannot be applied twice', async () => {
+    const pedido = await Pedido.create({ clienteId: cliente.id, usuarioId: user.id, detalle: 'Pedido de prueba' });
+    let result = await request('/historial', 'POST', entrega({ pedidoId: pedido.id }));
+    assert.equal(result.status, 201, JSON.stringify(result.body));
+    await pedido.reload();
+    assert.equal(pedido.estado, 'entregado');
+
+    const despues = await estado();
+    result = await request('/historial', 'POST', entrega({ pedidoId: pedido.id }));
+    assert.equal(result.status, 409);
+    assert.match(result.body.error, /ya fue entregado/);
+    assert.deepEqual(await estado(), despues);
+});
 test('manual prices, payment-only visits and container returns are handled and rounded to cents', async () => {
     let result = await request('/historial', 'POST', entrega({ detalles: [{ productoId: producto.id, cantidadEntregada: 3, precioUnitario: 33.33 }] }));
     assert.equal(result.status, 201); assert.equal(result.body.historial.importeTotal, 99.99); assert.equal(result.body.detalles[0].importe, 99.99);
@@ -182,7 +196,7 @@ test('summaries aggregate the period and today follows the Argentine commercial 
     t.mock.timers.enable({ apis: ['Date'], now: new Date(dia + 'T23:30:00-03:00') });
     // La sesion se emite con el reloj simulado; si no, el token de 2026 llega vencido a 2030.
     const tokenReal = token; token = crearSesion(user); t.after(() => { token = tokenReal; });
-    await request('/historial', 'POST', entrega({ montoPagado: 50, detalles: [{ productoId: producto.id, cantidadEntregada: 2, cantidadEnvaseDevuelto: 1 }, { productoId: otro.id, cantidadEntregada: 1 }] }));
+    await request('/historial', 'POST', entrega({ montoPagado: 50, metodoPago: 'transferencia', detalles: [{ productoId: producto.id, cantidadEntregada: 2, cantidadEnvaseDevuelto: 1 }, { productoId: otro.id, cantidadEntregada: 1 }] }));
     await request('/historial', 'POST', { clienteId: cliente.id, montoPagado: 25.5 });
     const fuera = await Historial.create({ clienteId: cliente.id, usuarioId: user.id, saldoAnterior: 0, importeTotal: 1000, montoPagado: 1000, saldoFinal: 0, fecha: new Date('2030-03-11T00:10:00-03:00') });
     let result = await request('/historial/resumen?desde=' + dia + '&hasta=' + dia);
@@ -191,10 +205,12 @@ test('summaries aggregate the period and today follows the Argentine commercial 
         productos: [{ nombre: otro.nombre, cantidad: 1, devueltos: 0 }, { nombre: producto.nombre, cantidad: 2, devueltos: 1 }].sort((a, b) => a.nombre.localeCompare(b.nombre)) });
     result = await request('/historial/resumen-hoy');
     assert.equal(result.body.fecha, dia); assert.equal(result.body.cobrado, 75.5); assert.equal(result.body.entregasCount, 2); assert.equal(result.body.entregados, 3); assert.equal(result.body.devueltos, 1);
+    assert.deepEqual(result.body.cobradoPorMetodo, { efectivo: 25.5, transferencia: 50, mercadopago: 0 });
     assert.ok(!result.body.productos.some(p => p.cantidad === 1000));
     t.mock.timers.setTime(new Date('2030-03-11T00:20:00-03:00').getTime());
     result = await request('/historial/resumen-hoy');
     assert.equal(result.body.fecha, '2030-03-11'); assert.equal(result.body.cobrado, 1000); assert.equal(result.body.entregasCount, 1); assert.ok(fuera.id);
+    assert.deepEqual(result.body.cobradoPorMetodo, { efectivo: 1000, transferencia: 0, mercadopago: 0 });
 });
 test('database connection failures return 503 and query failures 500', async t => {
     t.mock.method(console, 'error', () => {});

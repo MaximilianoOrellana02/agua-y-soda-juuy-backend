@@ -89,7 +89,6 @@ export async function restablecerPassword(req: Request, res: Response) {
         const usuario = await Usuario.findOne({ where: { resetTokenHash: hash, resetTokenExpiresAt: { [Op.gt]: new Date() } } });
         if (!usuario) return res.status(400).json({ error: resetError });
         const passwordHash = await bcrypt.hash(passwordNueva, SALT_ROUNDS);
-        // La condicion y el consumo ocurren en un unico UPDATE, incluso con solicitudes concurrentes.
         const [updated] = await Usuario.update({ passwordHash, sessionVersion: literal('sessionVersion + 1'), resetTokenHash: null, resetTokenExpiresAt: null }, {
             where: { id: usuario.id, sessionVersion: usuario.sessionVersion, resetTokenHash: hash, resetTokenExpiresAt: { [Op.gt]: new Date() } },
         });

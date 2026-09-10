@@ -9,6 +9,7 @@ import Historial from "../models/Historial";
 import HistorialDetalle from "../models/HistorialDetalle";
 import Usuario from "../models/Usuario";
 import MovimientoStock from "../models/MovimientoStock";
+import Pedido from "../models/Pedido";
 import { fechaComercial, rangoDiaComercial } from "../utils/fecha-comercial";
 import { precioVigente } from "../services/producto.service";
 import {
@@ -35,8 +36,7 @@ function whereFecha(rango: RangoFechas): WhereOptions {
   };
 }
 
-// Bloquea los productos en orden de id: dos entregas concurrentes con los mismos productos
-// los toman siempre en la misma secuencia y no se traban entre si.
+
 async function bloquearProductos(
   ids: string[],
   transaction: Transaction,
@@ -60,10 +60,8 @@ async function bloquearProductos(
 
 export async function crearEntrega(req: AuthRequest, res: Response) {
   try {
-    // Se valida antes de abrir la transaccion para no gastar conexiones en requests invalidos.
     const datos = validarEntrega(req.body);
     const resultado = await sequelize.transaction(async (transaction) => {
-      // El lock del cliente coordina con su baja logica y serializa las entregas del mismo cliente.
       const cliente = await Cliente.findByPk(datos.clienteId, {
         transaction,
         lock: transaction.LOCK.UPDATE,
@@ -77,6 +75,21 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
         throw new ConflictoHistorial(
           "El saldo del cliente cambio. Recarga la pagina y revisa la deuda anterior antes de confirmar.",
         );
+      }
+      const pedido = datos.pedidoId
+        ? await Pedido.findByPk(datos.pedidoId, {
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        })
+        : null;
+      if (datos.pedidoId && !pedido) {
+        throw new RecursoHistorialAusente("Pedido no encontrado");
+      }
+      if (pedido && pedido.clienteId !== cliente.id) {
+        throw new ConflictoHistorial("El pedido pertenece a otro cliente");
+      }
+      if (pedido?.estado === "entregado") {
+        throw new ConflictoHistorial("El pedido ya fue entregado");
       }
       const productos = await bloquearProductos(
         datos.detalles.map((d) => d.productoId),
@@ -98,7 +111,6 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
         }
         let precioUnitario = detalle.precioUnitario;
         if (precioUnitario === undefined) {
-          // Mismo criterio de vigencia que el modulo de productos (ultimo precio cargado).
           const vigente = await precioVigente(
             producto.id,
             cliente.tipoCliente,
@@ -211,6 +223,9 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
         { saldoActual: saldoFinal, ultimaVisitaFecha: fechaComercial() },
         { transaction },
       );
+      if (pedido) {
+        await pedido.update({ estado: "entregado" }, { transaction });
+      }
       return { historial, detalles };
     });
     if (!resultado)
@@ -221,8 +236,6 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
   }
 }
 
-// Historial de un cliente (tambien de los dados de baja), del mas reciente al mas antiguo.
-// Acepta desde, hasta, page y limit (hasta 500, 100 por defecto); el total va en X-Total-Historial.
 export async function historialPorCliente(req: AuthRequest, res: Response) {
   try {
     const clienteId = req.params.clienteId as string;
@@ -340,7 +353,25 @@ async function resumir(rango: RangoFechas) {
   };
 }
 
-// Totales del periodo: totalPendiente es lo facturado menos lo cobrado en el periodo, no la deuda acumulada.
+async function resumirCobrosPorMetodo(rango: RangoFechas) {
+  const filas = (await Historial.findAll({
+    where: whereFecha(rango),
+    attributes: [
+      "metodoPago",
+      [fn("SUM", col("montoPagado")), "total"],
+    ],
+    group: ["metodoPago"],
+    raw: true,
+  })) as unknown as Array<{
+    metodoPago: "efectivo" | "transferencia" | "mercadopago";
+    total: string;
+  }>;
+
+  const cobrado = { efectivo: 0, transferencia: 0, mercadopago: 0 };
+  for (const fila of filas) cobrado[fila.metodoPago] = redondear(Number(fila.total));
+  return cobrado;
+}
+
 export async function resumenHistorial(req: AuthRequest, res: Response) {
   try {
     return res.json(await resumir(validarRangoFechas(req.query)));
@@ -349,14 +380,18 @@ export async function resumenHistorial(req: AuthRequest, res: Response) {
   }
 }
 
-// Resumen del dia comercial de Argentina, el mismo criterio que las visitas, sin depender del reloj del servidor.
 export async function resumenHoy(req: AuthRequest, res: Response) {
   try {
     const { inicio, fin } = rangoDiaComercial(fechaComercial());
-    const resumen = await resumir({ desde: inicio, hasta: fin });
+    const rango = { desde: inicio, hasta: fin };
+    const [resumen, cobradoPorMetodo] = await Promise.all([
+      resumir(rango),
+      resumirCobrosPorMetodo(rango),
+    ]);
     return res.json({
       fecha: fechaComercial(),
       cobrado: resumen.totalPagado,
+      cobradoPorMetodo,
       entregasCount: resumen.cantidadEntregas,
       entregados: resumen.productos.reduce((total, p) => total + p.cantidad, 0),
       devueltos: resumen.productos.reduce((total, p) => total + p.devueltos, 0),
