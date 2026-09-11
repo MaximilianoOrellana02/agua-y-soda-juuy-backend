@@ -77,7 +77,7 @@ test('migration can be retried and reversed before any client is archived', asyn
 });
 
 test('all client routes require authentication', async () => {
-    for (const [url, method] of [['/clientes', 'GET'], ['/clientes', 'POST'], ['/clientes/deuda-vieja', 'GET'], [clientUrl(), 'GET'], [clientUrl(), 'PUT'], [clientUrl(), 'DELETE'], [clientUrl('/envases'), 'GET'], [clientUrl('/ubicacion'), 'PUT'], [clientUrl('/visita'), 'PUT']]) {
+    for (const [url, method] of [['/clientes', 'GET'], ['/clientes', 'POST'], ['/clientes/desactivados', 'GET'], ['/clientes/deuda-vieja', 'GET'], [clientUrl(), 'GET'], [clientUrl(), 'PUT'], [clientUrl(), 'DELETE'], [clientUrl('/envases'), 'GET'], [clientUrl('/ubicacion'), 'PUT'], [clientUrl('/visita'), 'PUT']]) {
         assert.equal((await request(url, method, undefined, false)).status, 401);
     }
 });
@@ -190,15 +190,31 @@ test('pending orders block deletion and remain visible', async () => {
     assert.ok(await Cliente.findByPk(cliente.id)); assert.ok(await Pedido.findByPk(pedido.id));
 });
 
-test('nonzero balances and outstanding containers block deletion', async () => {
+test('nonzero balances block deletion', async () => {
     for (const saldoActual of [100, -100]) {
         await cliente.update({ saldoActual });
         assert.equal((await request(clientUrl(), 'DELETE')).status, 409);
     }
-    await cliente.update({ saldoActual: 0 });
+});
+
+test('outstanding containers do not block soft deletion and remain recorded', async () => {
     const producto = await Producto.create({ nombre: 'Envase pendiente ' + cliente.id });
-    await SaldoEnvase.create({ clienteId: cliente.id, productoId: producto.id, cantidad: 1 });
-    assert.equal((await request(clientUrl(), 'DELETE')).status, 409);
+    const envase = await SaldoEnvase.create({ clienteId: cliente.id, productoId: producto.id, cantidad: 1 });
+    assert.equal((await request(clientUrl(), 'DELETE')).status, 204);
+    assert.ok((await Cliente.findByPk(cliente.id, { paranoid: false })).deletedAt);
+    await envase.reload();
+    assert.equal(envase.cantidad, 1);
+});
+
+test('archived listing returns only soft-deleted clients', async () => {
+    const activo = await Cliente.create({ nombre: 'Activo', apellido: randomBytes(4).toString('hex') });
+    assert.equal((await request(clientUrl(), 'DELETE')).status, 204);
+
+    const result = await request('/clientes/desactivados');
+    assert.equal(result.status, 200);
+    assert.ok(result.body.some(c => c.id === cliente.id && c.deletedAt));
+    assert.equal(result.body.some(c => c.id === activo.id), false);
+    assert.equal((await request('/clientes')).body.some(c => c.id === cliente.id), false);
 });
 
 test('soft deletion preserves settled history, delivered orders and zero container records', async () => {

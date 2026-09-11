@@ -1,5 +1,5 @@
 import { Response } from "express";
-import { Op, QueryTypes } from "sequelize";
+import { Op, QueryTypes, WhereOptions } from "sequelize";
 import { AuthRequest } from "../middlewares/auth.middleware";
 import Cliente from "../models/Cliente";
 import SaldoEnvase from "../models/SaldoEnvase";
@@ -58,6 +58,32 @@ export async function listarClientes(req: AuthRequest, res: Response) {
       ],
     });
     return res.json(clientes);
+  } catch (error) {
+    return responderErrorCliente(res, error, "Error al listar clientes");
+  }
+}
+
+export async function listarDesactivados(req: AuthRequest, res: Response) {
+  try {
+    const clientes = await Cliente.findAll({
+      paranoid: false,
+      where: {
+        deletedAt: { [Op.ne]: null },
+      } as WhereOptions,
+      include: [
+        {
+          model: SaldoEnvase,
+          as: "saldosEnvase",
+          attributes: ["productoId", "cantidad"],
+        },
+        { model: Barrio, as: "barrio", attributes: ["id", "nombre"] },
+      ],
+      order: [
+        ["apellido", "ASC"],
+        ["nombre", "ASC"],
+      ],
+    });
+    return res.json(clientes)
   } catch (error) {
     return responderErrorCliente(res, error, "Error al listar clientes");
   }
@@ -122,27 +148,21 @@ export async function eliminarCliente(req: AuthRequest, res: Response) {
         lock: transaction.LOCK.UPDATE,
       });
       if (!cliente) return "no-encontrado";
-      const envases = await SaldoEnvase.count({
-        where: { clienteId: cliente.id, cantidad: { [Op.ne]: 0 } },
-        transaction,
-      });
       const pedidos = await Pedido.count({
         where: { clienteId: cliente.id, estado: "pendiente" },
         transaction,
       });
-      if (cliente.saldoActual !== 0 || envases || pedidos) return "pendientes";
+      if (cliente.saldoActual !== 0 || pedidos) return "pendientes";
       await cliente.destroy({ transaction });
       return "eliminado";
     });
     if (resultado === "no-encontrado")
       return res.status(404).json({ error: "Cliente no encontrado" });
     if (resultado === "pendientes")
-      return res
-        .status(409)
-        .json({
-          error:
-            "Resolver saldo, envases y pedidos pendientes antes de dar de baja al cliente",
-        });
+      return res.status(409).json({
+        error:
+          "Resolver el saldo y los pedidos pendientes antes de dar de baja al cliente",
+      });
     return res.status(204).send();
   } catch (error) {
     return responderErrorCliente(res, error, "Error al eliminar cliente");
