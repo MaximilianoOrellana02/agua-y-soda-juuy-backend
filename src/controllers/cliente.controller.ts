@@ -83,7 +83,7 @@ export async function listarDesactivados(req: AuthRequest, res: Response) {
         ["nombre", "ASC"],
       ],
     });
-    return res.json(clientes)
+    return res.json(clientes);
   } catch (error) {
     return responderErrorCliente(res, error, "Error al listar clientes");
   }
@@ -279,5 +279,31 @@ export async function listarDeudaVieja(req: AuthRequest, res: Response) {
     return res.json(deudaVieja);
   } catch (error) {
     return responderErrorCliente(res, error, "Error al obtener deuda vieja");
+  }
+}
+
+export async function restaurarCliente(req: AuthRequest, res: Response) {
+  try {
+    const { id } = req.params;
+    const cliente = await Cliente.findByPk(id as string, {
+      paranoid: false,
+    });
+
+    if (!cliente) {
+      return res.status(404).json({
+        error: "Cliente no encontrado",
+      });
+    }
+
+    if (!cliente.deletedAt) {
+      return res.status(409).json({
+        error: "El cliente ya está activo",
+      });
+    }
+
+    await cliente.restore();
+    return res.json(cliente);
+  } catch (error) {
+    return responderErrorCliente(res, error, "Error al restaurar el cliente");
   }
 }

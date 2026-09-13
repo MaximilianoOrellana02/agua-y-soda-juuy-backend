@@ -77,14 +77,15 @@ test('migration can be retried and reversed before any client is archived', asyn
 });
 
 test('all client routes require authentication', async () => {
-    for (const [url, method] of [['/clientes', 'GET'], ['/clientes', 'POST'], ['/clientes/desactivados', 'GET'], ['/clientes/deuda-vieja', 'GET'], [clientUrl(), 'GET'], [clientUrl(), 'PUT'], [clientUrl(), 'DELETE'], [clientUrl('/envases'), 'GET'], [clientUrl('/ubicacion'), 'PUT'], [clientUrl('/visita'), 'PUT']]) {
+    for (const [url, method] of [['/clientes', 'GET'], ['/clientes', 'POST'], ['/clientes/desactivados', 'GET'], ['/clientes/deuda-vieja', 'GET'], [clientUrl(), 'GET'], [clientUrl(), 'PUT'], [clientUrl(), 'DELETE'], [clientUrl('/envases'), 'GET'], [clientUrl('/ubicacion'), 'PUT'], [clientUrl('/visita'), 'PUT'], [clientUrl('/restaurar'), 'PATCH']]) {
         assert.equal((await request(url, method, undefined, false)).status, 401);
     }
 });
 
 test('malformed ids return 400 and absent valid ids return 404', async () => {
-    for (const [suffix, method] of [['', 'GET'], ['', 'PUT'], ['', 'DELETE'], ['/envases', 'GET'], ['/ubicacion', 'PUT'], ['/visita', 'PUT']]) assert.equal((await request('/clientes/invalid' + suffix, method)).status, 400);
+    for (const [suffix, method] of [['', 'GET'], ['', 'PUT'], ['', 'DELETE'], ['/envases', 'GET'], ['/ubicacion', 'PUT'], ['/visita', 'PUT'], ['/restaurar', 'PATCH']]) assert.equal((await request('/clientes/invalid' + suffix, method)).status, 400);
     assert.equal((await request('/clientes/11111111-1111-4111-8111-111111111111')).status, 404);
+    assert.equal((await request('/clientes/11111111-1111-4111-8111-111111111111/restaurar', 'PATCH')).status, 404);
 });
 
 test('create validates names, body, enums, lengths and barrio before geocoding', async () => {
@@ -215,6 +216,24 @@ test('archived listing returns only soft-deleted clients', async () => {
     assert.ok(result.body.some(c => c.id === cliente.id && c.deletedAt));
     assert.equal(result.body.some(c => c.id === activo.id), false);
     assert.equal((await request('/clientes')).body.some(c => c.id === cliente.id), false);
+});
+
+test('restore moves an archived client back to the active listing', async () => {
+    assert.equal((await request(clientUrl(), 'DELETE')).status, 204);
+    assert.ok((await request('/clientes/desactivados')).body.some(c => c.id === cliente.id));
+
+    const restored = await request(clientUrl('/restaurar'), 'PATCH');
+    assert.equal(restored.status, 200);
+    assert.equal(restored.body.id, cliente.id);
+    assert.equal(restored.body.deletedAt, null);
+    assert.ok((await request('/clientes')).body.some(c => c.id === cliente.id));
+    assert.equal((await request('/clientes/desactivados')).body.some(c => c.id === cliente.id), false);
+});
+
+test('restore rejects clients that are already active', async () => {
+    const result = await request(clientUrl('/restaurar'), 'PATCH');
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, 'El cliente ya está activo');
 });
 
 test('soft deletion preserves settled history, delivered orders and zero container records', async () => {

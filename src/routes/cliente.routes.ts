@@ -12,6 +12,7 @@ import {
   obtenerCliente,
   obtenerSaldoEnvases,
   listarDesactivados,
+  restaurarCliente,
 } from "../controllers/cliente.controller";
 
 const router = Router();
@@ -32,6 +33,7 @@ router.delete("/:id", eliminarCliente);
 router.get("/:id/envases", obtenerSaldoEnvases);
 router.put("/:id/ubicacion", ajustarUbicacion);
 router.put("/:id/visita", marcarVisita);
+router.patch("/:id/restaurar", restaurarCliente);
 
 export default router;
 
