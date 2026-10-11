@@ -308,3 +308,57 @@ test('raw debt query excludes archived clients', async () => {
     const result = await request('/clientes/deuda-vieja?dias=0');
     assert.equal(result.status, 200); assert.equal(result.body.some(c => c.id === cliente.id), false);
 });
+
+test('activity reports last real delivery, frequent clients and active clients this month', async () => {
+    const producto = await Producto.create({ nombre: 'Actividad ' + randomBytes(4).toString('hex'), stockActual: 100 });
+    const frecuente = await Cliente.create({ nombre: 'Frecuente', apellido: randomBytes(4).toString('hex') });
+    const soloPago = await Cliente.create({ nombre: 'SoloPago', apellido: randomBytes(4).toString('hex'), saldoActual: 100 });
+    const actividad = async () => (await request('/clientes/actividad')).body;
+    const de = (body, id) => body.clientes.find((c) => c.clienteId === id);
+    const antes = (await actividad()).activosMes;
+
+    for (let i = 0; i < 4; i++) {
+        const r = await request('/historial', 'POST', { clienteId: frecuente.id, camionetaId: null, montoPagado: 0, detalles: [{ productoId: producto.id, cantidadEntregada: 1, precioUnitario: 100 }] });
+        assert.equal(r.status, 201);
+    }
+    // Un pago sin productos no es una entrega.
+    assert.equal((await request('/historial', 'POST', { clienteId: soloPago.id, montoPagado: 50 })).status, 201);
+
+    let body = await actividad();
+    assert.equal(de(body, frecuente.id).entregasUltimos30, 4);
+    assert.equal(de(body, frecuente.id).frecuente, true);
+    assert.ok(de(body, frecuente.id).ultimaEntrega);
+    assert.equal(de(body, soloPago.id), undefined);
+    assert.equal(body.activosMes, antes + 1);
+
+    // Una entrega de hace 40 días cuenta como última entrega pero no para "frecuente".
+    const [vieja] = await Historial.findAll({ where: { clienteId: frecuente.id }, order: [['fecha', 'ASC']], limit: 1 });
+    await vieja.update({ fecha: new Date(Date.now() - 40 * 24 * 60 * 60 * 1000) });
+    body = await actividad();
+    assert.equal(de(body, frecuente.id).entregasUltimos30, 3);
+    assert.equal(de(body, frecuente.id).frecuente, false);
+
+    // Los clientes archivados no aparecen ni cuentan como activos.
+    // (La API no deja archivar a quien debe; acá se archiva directo.)
+    await Cliente.findByPk(frecuente.id).then((c) => c.destroy());
+    body = await actividad();
+    assert.equal(de(body, frecuente.id), undefined);
+    assert.equal(body.activosMes, antes);
+});
+
+test('driver note and reference are optional, trimmed, bounded and clearable', async () => {
+    let result = await request('/clientes', 'POST', { nombre: 'Nota', apellido: 'Test', notaRepartidor: '  Timbre blanco lateral, perro en el patio ', referencia: ' Portón negro ' });
+    assert.equal(result.status, 201);
+    assert.equal(result.body.notaRepartidor, 'Timbre blanco lateral, perro en el patio');
+    assert.equal(result.body.referencia, 'Portón negro');
+    const id = result.body.id;
+    assert.equal((await request(`/clientes/${id}`)).body.referencia, 'Portón negro');
+
+    for (const invalido of [{ notaRepartidor: 'x'.repeat(256) }, { referencia: 'x'.repeat(101) }, { referencia: 5 }]) {
+        assert.equal((await request(`/clientes/${id}`, 'PUT', invalido)).status, 400);
+    }
+    result = await request(`/clientes/${id}`, 'PUT', { notaRepartidor: null, referencia: '   ' });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.notaRepartidor, null); assert.equal(result.body.referencia, null);
+    assert.equal((await request('/clientes', 'POST', { nombre: 'Sin', apellido: 'Nota' })).body.notaRepartidor, null);
+});

@@ -41,7 +41,7 @@ export function validarCliente(value: unknown, crear: boolean): Partial<ClienteC
             datos[campo] = texto.trim();
         }
     }
-    for (const [campo, max] of [['direccion', 200], ['telefono', 30], ['localidad', 100]] as const) {
+    for (const [campo, max] of [['direccion', 200], ['telefono', 30], ['localidad', 100], ['notaRepartidor', 255], ['referencia', 100]] as const) {
         if (tieneCampo(body, campo)) {
             const texto = body[campo];
             if (texto !== null && (typeof texto !== 'string' || texto.trim().length > max)) throw new DatosClienteInvalidos(`${campo} invalido`);

@@ -8,6 +8,9 @@ import HistorialDetalle from "./HistorialDetalle";
 import Barrio from "./Barrio";
 import MovimientoStock from "./MovimientoStock";
 import Pedido from "./Pedido";
+import StockCamioneta from "./StockCamioneta";
+import Camioneta from "./Camioneta";
+import Reparto from "./Reparto";
 
 // Producto <-> PrecioProducto
 Producto.hasMany(PrecioProducto, { foreignKey: "productoId", as: "precios" });
@@ -46,17 +49,75 @@ HistorialDetalle.belongsTo(Producto, {
   as: "producto",
 });
 
-
-Producto.hasMany(MovimientoStock, { foreignKey: 'productoId', as: 'movimientosStock' });
-MovimientoStock.belongsTo(Producto, { foreignKey: 'productoId', as: 'producto' });
-Usuario.hasMany(MovimientoStock, { foreignKey: 'usuarioId', as: 'movimientosStock' });
-MovimientoStock.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+Producto.hasMany(MovimientoStock, {
+  foreignKey: "productoId",
+  as: "movimientosStock",
+});
+MovimientoStock.belongsTo(Producto, {
+  foreignKey: "productoId",
+  as: "producto",
+});
+Usuario.hasMany(MovimientoStock, {
+  foreignKey: "usuarioId",
+  as: "movimientosStock",
+});
+MovimientoStock.belongsTo(Usuario, { foreignKey: "usuarioId", as: "usuario" });
 
 // Cliente <-> Barrio
-Barrio.hasMany(Cliente, { foreignKey: "barrioId", as: "clientes", onDelete: 'RESTRICT', onUpdate: 'CASCADE' });
-Cliente.belongsTo(Barrio, { foreignKey: "barrioId", as: "barrio", onDelete: 'RESTRICT', onUpdate: 'CASCADE' });
-
+Barrio.hasMany(Cliente, {
+  foreignKey: "barrioId",
+  as: "clientes",
+  onDelete: "RESTRICT",
+  onUpdate: "CASCADE",
+});
+Cliente.belongsTo(Barrio, {
+  foreignKey: "barrioId",
+  as: "barrio",
+  onDelete: "RESTRICT",
+  onUpdate: "CASCADE",
+});
 
 //Pedidos
-Cliente.hasMany(Pedido, { foreignKey: 'clienteId', as: 'pedidos' });
-Pedido.belongsTo(Cliente, { foreignKey: 'clienteId', as: 'cliente' });
+Cliente.hasMany(Pedido, { foreignKey: "clienteId", as: "pedidos" });
+Pedido.belongsTo(Cliente, { foreignKey: "clienteId", as: "cliente" });
+
+Camioneta.hasMany(StockCamioneta, { foreignKey: "camionetaId", as: "stock" });
+StockCamioneta.belongsTo(Camioneta, {
+  foreignKey: "camionetaId",
+  as: "camioneta",
+});
+Producto.hasMany(StockCamioneta, {
+  foreignKey: "productoId",
+  as: "stockEnCamionetas",
+});
+StockCamioneta.belongsTo(Producto, {
+  foreignKey: "productoId",
+  as: "producto",
+});
+
+Camioneta.hasMany(MovimientoStock, {
+  foreignKey: "camionetaId",
+  as: "movimientosStock",
+});
+MovimientoStock.belongsTo(Camioneta, {
+  foreignKey: "camionetaId",
+  as: "camioneta",
+});
+
+Camioneta.hasMany(Historial, { foreignKey: "camionetaId", as: "historiales" });
+Historial.belongsTo(Camioneta, { foreignKey: "camionetaId", as: "camioneta" });
+
+Camioneta.hasMany(Usuario, {
+  foreignKey: "camionetaActivaId",
+  as: "repartidores",
+});
+Usuario.belongsTo(Camioneta, {
+  foreignKey: "camionetaActivaId",
+  as: "camionetaActiva",
+});
+
+// Reparto del día <-> Usuario / Camioneta
+Usuario.hasMany(Reparto, { foreignKey: "usuarioId", as: "repartos" });
+Reparto.belongsTo(Usuario, { foreignKey: "usuarioId", as: "usuario" });
+Camioneta.hasMany(Reparto, { foreignKey: "camionetaId", as: "repartos" });
+Reparto.belongsTo(Camioneta, { foreignKey: "camionetaId", as: "camioneta" });

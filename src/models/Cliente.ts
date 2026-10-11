@@ -19,13 +19,15 @@ interface ClienteAttributes {
   latitud: number | null;
   longitud: number | null;
   ultimaVisitaFecha: string | null;
-
+  // Indicaciones para el repartidor: nota libre y referencia corta del lugar.
+  notaRepartidor: string | null;
+  referencia: string | null;
 }
 
 
 export interface ClienteCreationAttributes extends Optional<
   ClienteAttributes,
-  "id" | "saldoActual" | "barrioId" | "categoria" | "latitud" | "longitud" | 'ultimaVisitaFecha' | 'direccion' | 'telefono' | 'localidad' | 'tipoCliente'
+  "id" | "saldoActual" | "barrioId" | "categoria" | "latitud" | "longitud" | 'ultimaVisitaFecha' | 'direccion' | 'telefono' | 'localidad' | 'tipoCliente' | 'notaRepartidor' | 'referencia'
 > { }
 
 class Cliente
@@ -37,6 +39,8 @@ class Cliente
   public direccion!: string | null;
   public telefono!: string | null;
   public localidad!: string | null;
+  public notaRepartidor!: string | null;
+  public referencia!: string | null;
   public barrioId!: string | null;
   public categoria!: CategoriaCliente;
   public saldoActual!: number;
@@ -83,6 +87,18 @@ Cliente.init(
       validate: { len: [0, 30] },
     },
     localidad: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      defaultValue: null,
+      validate: { len: [0, 100] },
+    },
+    notaRepartidor: {
+      type: DataTypes.STRING(255),
+      allowNull: true,
+      defaultValue: null,
+      validate: { len: [0, 255] },
+    },
+    referencia: {
       type: DataTypes.STRING(100),
       allowNull: true,
       defaultValue: null,

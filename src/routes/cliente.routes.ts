@@ -2,6 +2,7 @@ import { Router } from "express";
 import { verificarToken } from "../middlewares/auth.middleware";
 import { esUuid } from "../utils/cliente.validation";
 import {
+  actividadClientes,
   actualizarCliente,
   ajustarUbicacion,
   crearCliente,
@@ -27,6 +28,7 @@ router.post("/", crearCliente);
 router.get("/", listarClientes);
 router.get("/desactivados", listarDesactivados);
 router.get("/deuda-vieja", listarDeudaVieja);
+router.get("/actividad", actividadClientes);
 router.get("/:id", obtenerCliente);
 router.put("/:id", actualizarCliente);
 router.delete("/:id", eliminarCliente);

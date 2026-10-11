@@ -15,6 +15,7 @@ import {
   emailValido,
   passwordLoginValida,
   passwordValida,
+  rolValido,
   texto,
 } from "../utils/usuario.validation";
 import { responderErrorUsuario } from "../utils/usuario.error";
@@ -31,6 +32,7 @@ function datosPublicos(usuario: Usuario) {
     username: usuario.username,
     nombreCompleto: usuario.nombreCompleto,
     email: usuario.email,
+    rol: usuario.rol,
   };
 }
 
@@ -39,10 +41,15 @@ export async function registrar(req: Request, res: Response) {
   const username = texto(body.username, 50);
   const nombreCompleto = texto(body.nombreCompleto, 100);
   const email = emailValido(body.email);
+  const rol = rolValido(body.rol);
   if (!username || !nombreCompleto || !email)
     return res
       .status(400)
       .json({ error: "Username, nombre completo o email invalidos" });
+  if (!rol)
+    return res
+      .status(400)
+      .json({ error: "rol debe ser admin o repartidor" });
   if (!passwordValida(body.password))
     return res.status(400).json({ error: passwordError });
   try {
@@ -59,6 +66,7 @@ export async function registrar(req: Request, res: Response) {
       nombreCompleto,
       email,
       passwordHash,
+      rol,
     });
     return res.status(201).json(datosPublicos(usuario));
   } catch (error) {
@@ -176,6 +184,18 @@ export async function restablecerPassword(req: Request, res: Response) {
       error,
       "Error al restablecer la contrasena",
     );
+  }
+}
+
+// El front lo usa al abrir la app para refrescar los datos guardados (rol incluido) sin volver a loguearse.
+export async function usuarioActual(req: AuthRequest, res: Response) {
+  try {
+    const usuario = await Usuario.findByPk(req.usuario!.id);
+    if (!usuario)
+      return res.status(401).json({ error: "Usuario no encontrado o sesion invalida" });
+    return res.json(datosPublicos(usuario));
+  } catch (error) {
+    return responderErrorUsuario(res, error, "Error al obtener el usuario");
   }
 }
 

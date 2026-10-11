@@ -1,6 +1,10 @@
 import { DataTypes, Model, Optional } from "sequelize";
 import sequelize from "../config/database";
 
+import { ROLES_USUARIO, RolUsuario } from "../utils/usuario.validation";
+
+export type { RolUsuario };
+
 interface UsuarioAttributes {
     id: string;
     username: string;
@@ -10,9 +14,13 @@ interface UsuarioAttributes {
     sessionVersion: number;
     resetTokenHash: string | null;
     resetTokenExpiresAt: Date | null;
+    rol: RolUsuario;
+    camionetaActivaId: string | null;
+    camionetaActivaFecha: string | null; // AAAA-MM-DD: el día en que eligió camioneta
 }
 
-interface UsuarioCreationAttributes extends Optional<UsuarioAttributes, 'id' | 'sessionVersion' | 'resetTokenHash' | 'resetTokenExpiresAt'> { }
+interface UsuarioCreationAttributes extends Optional<UsuarioAttributes,
+    'id' | 'sessionVersion' | 'resetTokenHash' | 'resetTokenExpiresAt' | 'rol' | 'camionetaActivaId' | 'camionetaActivaFecha'> { }
 
 class Usuario extends Model<UsuarioAttributes, UsuarioCreationAttributes>
     implements UsuarioAttributes {
@@ -24,6 +32,9 @@ class Usuario extends Model<UsuarioAttributes, UsuarioCreationAttributes>
     public sessionVersion!: number;
     public resetTokenHash!: string | null;
     public resetTokenExpiresAt!: Date | null;
+    public rol!: RolUsuario;
+    public camionetaActivaId!: string | null;
+    public camionetaActivaFecha!: string | null;
 
     public readonly createdAt!: Date;
     public readonly updatedAt!: Date;
@@ -63,6 +74,14 @@ Usuario.init(
         sessionVersion: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
         resetTokenHash: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null, unique: true },
         resetTokenExpiresAt: { type: DataTypes.DATE, allowNull: true, defaultValue: null },
+        rol: {
+            type: DataTypes.ENUM(...ROLES_USUARIO),
+            allowNull: false,
+            defaultValue: 'repartidor',
+            validate: { isIn: [[...ROLES_USUARIO]] },
+        },
+        camionetaActivaId: { type: DataTypes.UUID, allowNull: true, defaultValue: null },
+        camionetaActivaFecha: { type: DataTypes.DATEONLY, allowNull: true, defaultValue: null },
     },
     {
         sequelize,

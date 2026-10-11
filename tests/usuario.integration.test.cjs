@@ -56,6 +56,10 @@ before(async () => {
     await require('../migrations/20260708223742-create-usuarios').up(qi, Sequelize);
     await require('../migrations/20260729044244-add-email-usuarios').up(qi, Sequelize);
     await authMigration.up(qi, Sequelize);
+    // Columnas de add-camioneta-y-rol-columns sin sus FKs: esa migracion necesita tablas que este test no crea.
+    await qi.addColumn('usuarios', 'rol', { type: Sequelize.ENUM('admin', 'repartidor'), allowNull: false, defaultValue: 'repartidor' });
+    await qi.addColumn('usuarios', 'camionetaActivaId', { type: Sequelize.UUID, allowNull: true });
+    await qi.addColumn('usuarios', 'camionetaActivaFecha', { type: Sequelize.DATEONLY, allowNull: true });
     fixtureHash = await bcrypt.hash('initial123', 10);
 });
 
@@ -63,7 +67,7 @@ beforeEach(async () => {
     assertScratchDatabase();
     await Usuario.destroy({ where: {}, truncate: true });
     mails = []; mailFails = false;
-    user = await Usuario.create({ username: 'fixture', nombreCompleto: 'Fixture', email: 'fixture@example.com', passwordHash: fixtureHash });
+    user = await Usuario.create({ username: 'fixture', nombreCompleto: 'Fixture', email: 'fixture@example.com', passwordHash: fixtureHash, rol: 'admin' });
     access = crearSesion(user);
     const app = express();
     app.use(express.json());
@@ -91,16 +95,34 @@ test('registration and password change require a valid session', async () => {
     assert.equal((await request('/password', {}, undefined, 'PUT')).status, 401);
 });
 
+test('only admins register users; new users default to repartidor and unknown roles are rejected', async () => {
+    const repartidor = await Usuario.create({ username: 'driver', nombreCompleto: 'Driver', email: 'driver@example.com', passwordHash: fixtureHash, rol: 'repartidor' });
+    assert.equal((await request('/registro', { ...registration, rol: 'admin' }, crearSesion(repartidor))).status, 403);
+    assert.equal((await request('/registro', { ...registration, rol: 'jefe' }, access)).status, 400);
+    assert.equal(await Usuario.count({ where: { username: registration.username } }), 0);
+    let result = await request('/registro', registration, access);
+    assert.equal(result.status, 201); assert.equal(result.body.rol, 'repartidor');
+    result = await request('/registro', { ...registration, username: 'other-admin', email: 'other-admin@example.com', rol: 'admin' }, access);
+    assert.equal(result.status, 201); assert.equal(result.body.rol, 'admin');
+});
+
+test('GET /me returns the current public data including the role', async () => {
+    assert.equal((await request('/me', undefined, undefined, 'GET')).status, 401);
+    const result = await request('/me', undefined, access, 'GET');
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { id: user.id, username: 'fixture', nombreCompleto: 'Fixture', email: 'fixture@example.com', rol: 'admin' });
+});
+
 test('registration normalizes fields, hashes password and exposes only public data', async () => {
     const result = await request('/registro', { ...registration, username: ' new-user ', email: ' NEW@Example.COM ', nombreCompleto: ' New User ' }, access);
     assert.equal(result.status, 201);
-    assert.deepEqual(Object.keys(result.body).sort(), ['email', 'id', 'nombreCompleto', 'username']);
+    assert.deepEqual(Object.keys(result.body).sort(), ['email', 'id', 'nombreCompleto', 'rol', 'username']);
     assert.equal(result.body.email, registration.email);
     const stored = await Usuario.findByPk(result.body.id);
     assert.equal(await bcrypt.compare(registration.password, stored.passwordHash), true);
     const login = await request('/login', { username: registration.username, password: registration.password });
     assert.equal(login.status, 200);
-    assert.deepEqual(Object.keys(login.body.usuario).sort(), ['email', 'id', 'nombreCompleto', 'username']);
+    assert.deepEqual(Object.keys(login.body.usuario).sort(), ['email', 'id', 'nombreCompleto', 'rol', 'username']);
 });
 
 test('invalid registration data returns 400 without creating rows', async () => {

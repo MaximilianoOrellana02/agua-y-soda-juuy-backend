@@ -35,6 +35,8 @@ export interface EntregaInput {
     observacion: string | null;
     detalles: DetalleEntregaInput[];
     ajusteSaldo?: AjusteSaldoInput;
+    // undefined = la camioneta elegida hoy por el usuario (o deposito si no eligio); null = deposito.
+    camionetaId?: string | null;
 }
 export interface RangoFechas { desde?: Date; hasta?: Date; }
 export interface FiltrosHistorial extends RangoFechas { page: number; limit: number; }
@@ -121,6 +123,9 @@ export function validarEntrega(value: unknown): EntregaInput {
     if (body.pedidoId !== undefined && !esUuid(body.pedidoId)) {
         throw new DatosHistorialInvalidos('pedidoId debe ser un UUID');
     }
+    if (body.camionetaId !== undefined && body.camionetaId !== null && !esUuid(body.camionetaId)) {
+        throw new DatosHistorialInvalidos('camionetaId debe ser un UUID o null');
+    }
     const montoPagado = body.montoPagado === undefined || body.montoPagado === null ? 0 : importeHistorial(body.montoPagado, 'montoPagado');
     let detalles: DetalleEntregaInput[] = [];
     if (body.detalles !== undefined && body.detalles !== null) {
@@ -136,6 +141,7 @@ export function validarEntrega(value: unknown): EntregaInput {
         observacion: observacionHistorial(body.observacion), detalles,
         ...(body.pedidoId !== undefined ? { pedidoId: body.pedidoId as string } : {}),
         ...(body.ajusteSaldo !== undefined ? { ajusteSaldo: validarAjusteSaldo(body.ajusteSaldo) } : {}),
+        ...(body.camionetaId !== undefined ? { camionetaId: body.camionetaId as string | null } : {}),
     };
 }
 

@@ -1,5 +1,5 @@
 import { Response } from "express";
-import { col, fn, Op, Transaction, WhereOptions } from "sequelize";
+import { Transaction } from "sequelize";
 import sequelize from "../config/database";
 import { AuthRequest } from "../middlewares/auth.middleware";
 import Cliente from "../models/Cliente";
@@ -10,6 +10,13 @@ import HistorialDetalle from "../models/HistorialDetalle";
 import Usuario from "../models/Usuario";
 import MovimientoStock from "../models/MovimientoStock";
 import Pedido from "../models/Pedido";
+import StockCamioneta from "../models/StockCamioneta";
+import Camioneta from "../models/Camioneta";
+import {
+  bloquearCamioneta,
+  bloquearStockCamioneta,
+  camionetaDelDia,
+} from "../services/stock-camioneta.service";
 import { fechaComercial, rangoDiaComercial } from "../utils/fecha-comercial";
 import { precioVigente } from "../services/producto.service";
 import {
@@ -17,7 +24,6 @@ import {
   DatosHistorialInvalidos,
   IMPORTE_MAXIMO,
   LIMITE_PAGINA_CLIENTE,
-  RangoFechas,
   RecursoHistorialAusente,
   redondear,
   validarEntrega,
@@ -25,17 +31,7 @@ import {
   validarRangoFechas,
 } from "../utils/historial.validation";
 import { responderErrorHistorial } from "../utils/historial.error";
-
-function whereFecha(rango: RangoFechas): WhereOptions {
-  if (!rango.desde && !rango.hasta) return {};
-  return {
-    fecha: {
-      ...(rango.desde ? { [Op.gte]: rango.desde } : {}),
-      ...(rango.hasta ? { [Op.lte]: rango.hasta } : {}),
-    },
-  };
-}
-
+import { resumir, resumirCobrosPorMetodo, whereFecha } from "../services/resumen.service";
 
 async function bloquearProductos(
   ids: string[],
@@ -91,10 +87,39 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
       if (pedido?.estado === "entregado") {
         throw new ConflictoHistorial("El pedido ya fue entregado");
       }
+      // Sin camioneta la entrega descuenta del deposito; con camioneta, del stock de esa camioneta.
+      let camionetaId = datos.camionetaId;
+      if (camionetaId === undefined) {
+        const usuario = await Usuario.findByPk(req.usuario!.id, { transaction });
+        camionetaId = usuario ? camionetaDelDia(usuario) : null;
+      }
+      const camioneta = camionetaId
+        ? await bloquearCamioneta(camionetaId, transaction)
+        : null;
+      if (camionetaId && !camioneta) {
+        throw new RecursoHistorialAusente("Camioneta no encontrada");
+      }
+      if (camioneta && !camioneta.activa) {
+        throw new ConflictoHistorial(`La camioneta ${camioneta.nombre} esta desactivada`);
+      }
+      // Orden de bloqueo igual al de las cargas: camioneta, productos, stock de la camioneta.
       const productos = await bloquearProductos(
         datos.detalles.map((d) => d.productoId),
         transaction,
       );
+      const stockCamioneta = new Map<string, StockCamioneta>();
+      if (camioneta) {
+        for (const detalle of [...datos.detalles].sort((a, b) =>
+          a.productoId.localeCompare(b.productoId),
+        )) {
+          if (detalle.cantidadEntregada > 0) {
+            stockCamioneta.set(
+              detalle.productoId,
+              await bloquearStockCamioneta(camioneta.id, detalle.productoId, transaction),
+            );
+          }
+        }
+      }
 
       const lineas = [];
       for (const detalle of datos.detalles) {
@@ -104,9 +129,12 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
             `El producto ${producto.nombre} no es retornable y no admite envases devueltos`,
           );
         }
-        if (detalle.cantidadEntregada > producto.stockActual) {
+        const disponible = camioneta
+          ? stockCamioneta.get(producto.id)?.cantidad ?? 0
+          : producto.stockActual;
+        if (detalle.cantidadEntregada > disponible) {
           throw new ConflictoHistorial(
-            `Stock insuficiente de ${producto.nombre}: hay ${producto.stockActual} y se intentan entregar ${detalle.cantidadEntregada}`,
+            `Stock insuficiente de ${producto.nombre} en ${camioneta ? `la camioneta ${camioneta.nombre}` : "el deposito"}: hay ${disponible} y se intentan entregar ${detalle.cantidadEntregada}`,
           );
         }
         let precioUnitario = detalle.precioUnitario;
@@ -146,6 +174,7 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
         {
           clienteId: cliente.id,
           usuarioId: req.usuario!.id,
+          camionetaId: camioneta?.id ?? null,
           saldoAnterior,
           importeTotal,
           montoPagado: datos.montoPagado,
@@ -206,16 +235,24 @@ export async function crearEntrega(req: AuthRequest, res: Response) {
             {
               productoId: producto.id,
               usuarioId: req.usuario!.id,
+              camionetaId: camioneta?.id ?? null,
               tipo: "salida",
               cantidad: cantidadEntregada,
               motivo: "Entrega a cliente",
             },
             { transaction },
           );
-          await producto.increment("stockActual", {
-            by: -cantidadEntregada,
-            transaction,
-          });
+          if (camioneta) {
+            await stockCamioneta.get(producto.id)!.increment("cantidad", {
+              by: -cantidadEntregada,
+              transaction,
+            });
+          } else {
+            await producto.increment("stockActual", {
+              by: -cantidadEntregada,
+              transaction,
+            });
+          }
         }
       }
 
@@ -285,6 +322,7 @@ export async function listarHistorial(req: AuthRequest, res: Response) {
           paranoid: false,
         },
         { model: Usuario, as: "usuario", attributes: ["id", "nombreCompleto"] },
+        { model: Camioneta, as: "camioneta", attributes: ["id", "nombre"] },
       ],
       order: [
         ["fecha", "DESC"],
@@ -302,74 +340,6 @@ export async function listarHistorial(req: AuthRequest, res: Response) {
   } catch (error) {
     return responderErrorHistorial(res, error, "Error al listar historial");
   }
-}
-
-interface Totales {
-  cantidadEntregas: number;
-  totalImporte: number;
-  totalPagado: number;
-}
-
-async function resumir(rango: RangoFechas) {
-  const where = whereFecha(rango);
-  const totales = (await Historial.findOne({
-    where,
-    attributes: [
-      [fn("COUNT", col("id")), "cantidadEntregas"],
-      [fn("SUM", col("importeTotal")), "totalImporte"],
-      [fn("SUM", col("montoPagado")), "totalPagado"],
-    ],
-    raw: true,
-  })) as unknown as Totales | null;
-  const cantidades = (await HistorialDetalle.findAll({
-    include: [
-      { model: Historial, as: "historial", attributes: [], where },
-      { model: Producto, as: "producto", attributes: ["nombre"] },
-    ],
-    attributes: [
-      [fn("SUM", col("cantidadEntregada")), "entregados"],
-      [fn("SUM", col("cantidadEnvaseDevuelto")), "devueltos"],
-    ],
-    group: ["producto.id", "producto.nombre"],
-    order: [[col("producto.nombre"), "ASC"]],
-    raw: true,
-  })) as unknown as Array<{
-    "producto.nombre": string;
-    entregados: string;
-    devueltos: string;
-  }>;
-  const totalImporte = redondear(Number(totales?.totalImporte ?? 0));
-  const totalPagado = redondear(Number(totales?.totalPagado ?? 0));
-  return {
-    cantidadEntregas: Number(totales?.cantidadEntregas ?? 0),
-    totalImporte,
-    totalPagado,
-    totalPendiente: redondear(totalImporte - totalPagado),
-    productos: cantidades.map((c) => ({
-      nombre: c["producto.nombre"],
-      cantidad: Number(c.entregados),
-      devueltos: Number(c.devueltos),
-    })),
-  };
-}
-
-async function resumirCobrosPorMetodo(rango: RangoFechas) {
-  const filas = (await Historial.findAll({
-    where: whereFecha(rango),
-    attributes: [
-      "metodoPago",
-      [fn("SUM", col("montoPagado")), "total"],
-    ],
-    group: ["metodoPago"],
-    raw: true,
-  })) as unknown as Array<{
-    metodoPago: "efectivo" | "transferencia" | "mercadopago";
-    total: string;
-  }>;
-
-  const cobrado = { efectivo: 0, transferencia: 0, mercadopago: 0 };
-  for (const fila of filas) cobrado[fila.metodoPago] = redondear(Number(fila.total));
-  return cobrado;
 }
 
 export async function resumenHistorial(req: AuthRequest, res: Response) {

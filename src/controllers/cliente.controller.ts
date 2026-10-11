@@ -16,7 +16,7 @@ import {
   validarDias,
 } from "../utils/cliente.validation";
 import { responderErrorCliente } from "../utils/cliente.error";
-import { diasComercialesDesde, fechaComercial } from "../utils/fecha-comercial";
+import { diasComercialesDesde, fechaComercial, rangoDiaComercial } from "../utils/fecha-comercial";
 
 export async function crearCliente(req: AuthRequest, res: Response) {
   try {
@@ -279,6 +279,57 @@ export async function listarDeudaVieja(req: AuthRequest, res: Response) {
     return res.json(deudaVieja);
   } catch (error) {
     return responderErrorCliente(res, error, "Error al obtener deuda vieja");
+  }
+}
+
+// Frecuente = al menos esta cantidad de entregas en los últimos 30 días (≈ una por semana).
+export const ENTREGAS_CLIENTE_FRECUENTE = 4;
+
+interface ActividadFila {
+  clienteId: string;
+  ultimaEntrega: Date | string | null;
+  entregasUltimos30: number | string;
+  activoMes: number | string;
+}
+
+// Para la lista de clientes: última entrega, si es frecuente y cuántos clientes recibieron algo este mes.
+// Solo cuentan entregas con producto (un pago sin entrega no es una entrega).
+export async function actividadClientes(req: AuthRequest, res: Response) {
+  try {
+    const hoy = fechaComercial();
+    const inicioMes = rangoDiaComercial(`${hoy.slice(0, 7)}-01`).inicio;
+    const hace30Dias = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const filas = await sequelize.query<ActividadFila>(
+      `
+            SELECT h.clienteId,
+                MAX(h.fecha) AS ultimaEntrega,
+                SUM(CASE WHEN h.fecha >= :hace30Dias THEN 1 ELSE 0 END) AS entregasUltimos30,
+                MAX(CASE WHEN h.fecha >= :inicioMes THEN 1 ELSE 0 END) AS activoMes
+            FROM historiales h
+            JOIN clientes c ON c.id = h.clienteId AND c.deletedAt IS NULL
+            WHERE EXISTS (
+                SELECT 1 FROM historial_detalles d
+                WHERE d.historialId = h.id AND d.cantidadEntregada > 0
+            )
+            GROUP BY h.clienteId
+        `,
+      { type: QueryTypes.SELECT, replacements: { hace30Dias, inicioMes } },
+    );
+    const clientes = filas.map((f) => {
+      const entregasUltimos30 = Number(f.entregasUltimos30);
+      return {
+        clienteId: f.clienteId,
+        ultimaEntrega: f.ultimaEntrega ? new Date(f.ultimaEntrega) : null,
+        entregasUltimos30,
+        frecuente: entregasUltimos30 >= ENTREGAS_CLIENTE_FRECUENTE,
+      };
+    });
+    return res.json({
+      activosMes: filas.filter((f) => Number(f.activoMes) === 1).length,
+      clientes,
+    });
+  } catch (error) {
+    return responderErrorCliente(res, error, "Error al obtener la actividad de clientes");
   }
 }
 

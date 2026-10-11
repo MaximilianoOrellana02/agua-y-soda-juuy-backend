@@ -9,6 +9,7 @@ interface MovimientoStockAttributes {
     id: string;
     productoId: string;
     usuarioId: string;
+    camionetaId: string | null; // null = movimiento del depósito
     tipo: TipoMovimientoStock;
     cantidad: number;
     motivo: string | null;
@@ -16,13 +17,14 @@ interface MovimientoStockAttributes {
 }
 
 interface MovimientoStockCreationAttributes
-    extends Optional<MovimientoStockAttributes, 'id' | 'fecha' | 'motivo'> { }
+    extends Optional<MovimientoStockAttributes, 'id' | 'fecha' | 'motivo' | 'camionetaId'> { }
 
 class MovimientoStock extends Model<MovimientoStockAttributes, MovimientoStockCreationAttributes>
     implements MovimientoStockAttributes {
     public id!: string;
     public productoId!: string;
     public usuarioId!: string;
+    public camionetaId!: string | null;
     public tipo!: TipoMovimientoStock;
     public cantidad!: number;
     public motivo!: string | null;
@@ -41,6 +43,13 @@ MovimientoStock.init(
         },
         productoId: { type: DataTypes.UUID, allowNull: false, validate: { uuidValido: uuidDeModelo } },
         usuarioId: { type: DataTypes.UUID, allowNull: false, validate: { uuidValido: uuidDeModelo } },
+        camionetaId: {
+            type: DataTypes.UUID,
+            allowNull: true,
+            defaultValue: null,
+            // null = depósito; Sequelize corre los validadores propios también con null
+            validate: { uuidValido(value: unknown) { if (value !== null) uuidDeModelo(value); } },
+        },
         tipo: {
             type: DataTypes.ENUM(...TIPOS_MOVIMIENTO),
             allowNull: false,
@@ -58,7 +67,7 @@ MovimientoStock.init(
             validate: { len: [1, 255] },
         },
         fecha: {
-            type: DataTypes.DATE,
+            type: DataTypes.DATE(3),
             allowNull: false,
             defaultValue: DataTypes.NOW,
         },

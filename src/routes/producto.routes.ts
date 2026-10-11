@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { verificarToken } from "../middlewares/auth.middleware";
+import { soloAdmin, verificarToken } from "../middlewares/auth.middleware";
 import { esUuid } from '../utils/cliente.validation';
 import { actualizarProducto, cambiarPrecio, crearProducto, desactivarProducto, listarProductos } from "../controllers/producto.controller";
 
@@ -11,9 +11,10 @@ router.param('id', (req, res, next, id) => {
     next();
 });
 
-router.post('/', crearProducto);
+// Alta de productos y precios: solo admin. El resto (listar, editar, baja) queda para todos.
+router.post('/', soloAdmin, crearProducto);
 router.get('/', listarProductos);
-router.put('/:id/precio', cambiarPrecio);
+router.put('/:id/precio', soloAdmin, cambiarPrecio);
 router.delete('/:id', desactivarProducto);
 router.put('/:id', actualizarProducto);
 

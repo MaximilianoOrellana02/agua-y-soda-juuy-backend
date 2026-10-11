@@ -18,6 +18,8 @@ export interface MovimientoInput {
 
 export interface FiltrosMovimientos {
     productoId?: string;
+    // null = solo movimientos del deposito; un id = solo los de esa camioneta.
+    camionetaId?: string | null;
     tipo?: TipoMovimiento;
     desde?: Date;
     hasta?: Date;
@@ -74,6 +76,11 @@ export function validarFiltrosMovimientos(value: unknown): FiltrosMovimientos {
     if (tieneCampo(query, 'productoId')) {
         if (!esUuid(query.productoId)) throw new DatosStockInvalidos('productoId debe ser un UUID');
         filtros.productoId = query.productoId;
+    }
+    if (tieneCampo(query, 'camionetaId')) {
+        if (query.camionetaId === 'deposito') filtros.camionetaId = null;
+        else if (esUuid(query.camionetaId)) filtros.camionetaId = query.camionetaId;
+        else throw new DatosStockInvalidos('camionetaId debe ser un UUID o "deposito"');
     }
     if (tieneCampo(query, 'tipo')) filtros.tipo = tipoMovimiento(query.tipo);
     if (tieneCampo(query, 'desde')) filtros.desde = fechaFiltro(query.desde, 'desde');

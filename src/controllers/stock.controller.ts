@@ -5,6 +5,7 @@ import sequelize from "../config/database";
 import Producto from "../models/Producto";
 import MovimientoStock from "../models/MovimientoStock";
 import Usuario from "../models/Usuario";
+import Camioneta from "../models/Camioneta";
 import {
   ConflictoStock,
   LIMITE_MOVIMIENTOS,
@@ -32,7 +33,8 @@ export async function crearMovimientoStock(req: AuthRequest, res: Response) {
         );
       }
       const movimiento = await MovimientoStock.create(
-        { ...datos, usuarioId: req.usuario!.id },
+        // Este endpoint solo mueve el deposito; las camionetas usan /api/camionetas/:id/movimientos.
+        { ...datos, usuarioId: req.usuario!.id, camionetaId: null },
         { transaction },
       );
       await producto.increment("stockActual", {
@@ -59,6 +61,8 @@ export async function listarMovimientosStock(req: AuthRequest, res: Response) {
     const where: WhereOptions = {};
     if (filtros.productoId)
       Object.assign(where, { productoId: filtros.productoId });
+    if (filtros.camionetaId !== undefined)
+      Object.assign(where, { camionetaId: filtros.camionetaId });
     if (filtros.tipo) Object.assign(where, { tipo: filtros.tipo });
     if (filtros.desde || filtros.hasta) {
       Object.assign(where, {
@@ -74,6 +78,7 @@ export async function listarMovimientosStock(req: AuthRequest, res: Response) {
       include: [
         { model: Producto, as: "producto", attributes: ["id", "nombre"] },
         { model: Usuario, as: "usuario", attributes: ["id", "nombreCompleto"] },
+        { model: Camioneta, as: "camioneta", attributes: ["id", "nombre"] },
       ],
       order: [
         ["fecha", "DESC"],

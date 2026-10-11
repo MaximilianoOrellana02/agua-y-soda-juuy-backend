@@ -37,7 +37,7 @@ const Usuario = require('../dist/models/Usuario').default;
         process.exit(1);
     }
     const passwordHash = await bcrypt.hash(password, 12);
-    await Usuario.create({ username, nombreCompleto, email, passwordHash });
+    await Usuario.create({ username, nombreCompleto, email, passwordHash, rol: 'admin' });
     console.log('Usuario creado');
     console.log('  username: ' + username);
     console.log('  email:    ' + email);

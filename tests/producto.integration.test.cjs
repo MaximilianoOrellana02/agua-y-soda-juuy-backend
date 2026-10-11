@@ -20,7 +20,7 @@ const Usuario = require('../dist/models/Usuario').default;
 const { crearSesion } = require('../dist/services/token.service');
 const { precioVigente } = require('../dist/services/producto.service');
 const migration = require('../migrations/20260908040000-harden-productos');
-let created = false, server, base, token;
+let created = false, server, base, token, tokenRepartidor;
 const absentId = '11111111-1111-4111-8111-111111111111';
 const uniqueName = () => 'Producto ' + randomBytes(8).toString('hex');
 function assertScratch() {
@@ -30,7 +30,7 @@ function assertScratch() {
 async function request(url, method = 'GET', body, auth = true) {
     const headers = {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    if (auth) headers.Authorization = 'Bearer ' + token;
+    if (auth) headers.Authorization = 'Bearer ' + (auth === true ? token : auth);
     const response = await fetch(base + url, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return { status: response.status, body: response.status === 204 ? null : await response.json() };
 }
@@ -45,7 +45,8 @@ before(async () => {
     assertScratch(); await adminDb.getQueryInterface().createDatabase(databaseName); created = true;
     const directory = path.join(__dirname, '../migrations');
     for (const file of fs.readdirSync(directory).filter(f => f.endsWith('.js')).sort()) await require(path.join(directory, file)).up(db.getQueryInterface(), Sequelize);
-    const user = await Usuario.create({ username: 'fixture', nombreCompleto: 'Fixture', email: 'fixture@example.com', passwordHash: 'unused-test-hash' });
+    const user = await Usuario.create({ username: 'fixture', nombreCompleto: 'Fixture', email: 'fixture@example.com', passwordHash: 'unused-test-hash', rol: 'admin' });
+    tokenRepartidor = crearSesion(await Usuario.create({ username: 'driver', nombreCompleto: 'Driver', email: 'driver@example.com', passwordHash: 'unused-test-hash' }));
     token = crearSesion(user);
     const app = express(); app.use(express.json());
     app.use('/api/productos', require('../dist/routes/producto.routes').default);
@@ -66,6 +67,18 @@ test('all product routes require authentication and ids must be uuids', async ()
         assert.equal((await request(route, method, body)).status, 400);
     }
 });
+test('only admins create products or change prices; repartidores can still list them', async () => {
+    const producto = await crear();
+    const nombre = uniqueName();
+    assert.equal((await request('/productos', 'POST', alta({ nombre }), tokenRepartidor)).status, 403);
+    assert.equal(await Producto.count({ where: { nombre } }), 0);
+    assert.equal((await request('/productos/' + producto.id + '/precio', 'PUT', { tipoCliente: 'particular', precio: 1 }, tokenRepartidor)).status, 403);
+    assert.equal((await request('/productos/' + producto.id + '/precio', 'PUT', { tipoCliente: 'particular', precio: 200 })).status, 201);
+    const lista = await request('/productos', 'GET', undefined, tokenRepartidor);
+    assert.equal(lista.status, 200);
+    assert.equal(preciosDe(lista.body.find(p => p.id === producto.id)).particular, 200);
+});
+
 test('create rejects malformed bodies with 400 without leaving products or prices behind', async () => {
     const productos = await Producto.count(), precios = await PrecioProducto.count();
     for (const body of [undefined, [], {}, alta({ nombre: '' }), alta({ nombre: 123 }), alta({ precioParticular: 'abc' }), alta({ precioParticular: -5 }),
